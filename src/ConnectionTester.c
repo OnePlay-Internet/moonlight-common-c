@@ -14,6 +14,23 @@
 
 #define MTU_TEST_SIZE 1040
 
+static int s_moonlight_port_https   = 47984;
+static int s_moonlight_port_http    = 47989;
+static int s_moonlight_port_rtsp    = 48010;
+static int s_moonlight_port_audio   = 47800;
+static int s_moonlight_port_video   = 47998;
+static int s_moonlight_port_control = 47999;
+
+void LiSetPorts(int https, int http, int rtsp, int audio, int video, int control)
+{
+    s_moonlight_port_https   = https;
+    s_moonlight_port_http    = http;
+    s_moonlight_port_rtsp    = rtsp;
+    s_moonlight_port_audio   = audio;
+    s_moonlight_port_video   = video;
+    s_moonlight_port_control = control;
+}
+
 unsigned int LiGetPortFlagsFromStage(int stage)
 {
     switch (stage)
@@ -56,21 +73,21 @@ unsigned short LiGetPortFromPortFlagIndex(int portFlagIndex)
     {
         // TCP ports
         case ML_PORT_INDEX_TCP_47984:
-            return 47984;
+            return s_moonlight_port_https;
         case ML_PORT_INDEX_TCP_47989:
-            return 47989;
+            return s_moonlight_port_http;
         case ML_PORT_INDEX_TCP_48010:
-            return 48010;
+            return s_moonlight_port_rtsp;
 
         // UDP ports
         case ML_PORT_INDEX_UDP_47998:
-            return 47998;
+            return s_moonlight_port_video;
         case ML_PORT_INDEX_UDP_47999:
-            return 47999;
+            return s_moonlight_port_control;
         case ML_PORT_INDEX_UDP_48000:
-            return 48000;
+            return s_moonlight_port_audio;
         case ML_PORT_INDEX_UDP_48010:
-            return 48010;
+            return s_moonlight_port_rtsp;
 
         default:
             LC_ASSERT(false);
