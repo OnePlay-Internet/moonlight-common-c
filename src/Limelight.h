@@ -825,6 +825,9 @@ int LiGetPendingAudioFrames(void);
 // negotiated audio frame duration.
 int LiGetPendingAudioDuration(void);
 
+// Allow to change ports used by moonlight
+void LiSetPorts(int https, int http, int rtsp, int audio, int video, int control);
+
 // Port index flags for use with LiGetPortFromPortFlagIndex() and LiGetProtocolFromPortFlagIndex()
 #define ML_PORT_INDEX_TCP_47984 0
 #define ML_PORT_INDEX_TCP_47989 1
