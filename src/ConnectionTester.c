@@ -16,16 +16,16 @@
 
 static int s_moonlight_port_https   = 47984;
 static int s_moonlight_port_http    = 47989;
-static int s_moonlight_port_rstp    = 48010;
+static int s_moonlight_port_rtsp    = 48010;
 static int s_moonlight_port_audio   = 47800;
 static int s_moonlight_port_video   = 47998;
 static int s_moonlight_port_control = 47999;
 
-void LiSetPorts(int https, int http, int rstp, int audio, int video, int control)
+void LiSetPorts(int https, int http, int rtsp, int audio, int video, int control)
 {
     s_moonlight_port_https   = https;
     s_moonlight_port_http    = http;
-    s_moonlight_port_rstp    = rstp;
+    s_moonlight_port_rtsp    = rtsp;
     s_moonlight_port_audio   = audio;
     s_moonlight_port_video   = video;
     s_moonlight_port_control = control;
@@ -77,7 +77,7 @@ unsigned short LiGetPortFromPortFlagIndex(int portFlagIndex)
         case ML_PORT_INDEX_TCP_47989:
             return s_moonlight_port_http;
         case ML_PORT_INDEX_TCP_48010:
-            return s_moonlight_port_rstp;
+            return s_moonlight_port_rtsp;
 
         // UDP ports
         case ML_PORT_INDEX_UDP_47998:
@@ -87,7 +87,7 @@ unsigned short LiGetPortFromPortFlagIndex(int portFlagIndex)
         case ML_PORT_INDEX_UDP_48000:
             return s_moonlight_port_audio;
         case ML_PORT_INDEX_UDP_48010:
-            return s_moonlight_port_rstp;
+            return s_moonlight_port_rtsp;
 
         default:
             LC_ASSERT(false);
