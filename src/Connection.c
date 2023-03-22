@@ -441,7 +441,7 @@ int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION stre
 
     Limelog("Starting control stream...");
     ListenerCallbacks.stageStarting(STAGE_CONTROL_STREAM_START);
-    err = startControlStream();
+    err = startControlStream(StreamConfig.controlStreamTimeoutLimit, StreamConfig.controlStreamTimeoutMinimum, StreamConfig.controlStreamTimeoutMaximum);
     if (err != 0) {
         Limelog("failed: %d\n", err);
         ListenerCallbacks.stageFailed(STAGE_CONTROL_STREAM_START, err);

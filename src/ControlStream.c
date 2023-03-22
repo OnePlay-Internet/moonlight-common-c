@@ -1195,7 +1195,7 @@ bool LiGetEstimatedRttInfo(uint32_t* estimatedRtt, uint32_t* estimatedRttVarianc
 }
 
 // Starts the control stream
-int startControlStream(void) {
+int startControlStream(unsigned int timeoutLimit, unsigned int timeoutMinimum, unsigned int timeoutMaximum) {
     int err;
 
     if (AppVersionQuad[0] >= 5) {
@@ -1259,9 +1259,16 @@ int startControlStream(void) {
 
         // Ensure the connect verify ACK is sent immediately
         enet_host_flush(client);
-        
+
+        // If timeouts specified, use them. If not, use defaults:
         // Set the peer timeout to 10 seconds and limit backoff to 2x RTT
-        enet_peer_timeout(peer, 2, 10000, 10000);
+        timeoutLimit = timeoutLimit ? timeoutLimit : 2;
+        timeoutMinimum = timeoutMinimum ? timeoutMinimum : 10000;
+        timeoutMaximum = timeoutMaximum ? timeoutMaximum : 10000;
+        if (timeoutMaximum < timeoutMinimum) {
+            timeoutMaximum = timeoutMinimum;
+        }
+        enet_peer_timeout(peer, timeoutLimit, timeoutMinimum, timeoutMaximum);
     }
     else {
         // NB: Do NOT use ControlPortNumber here. 47995 is correct for these old versions.

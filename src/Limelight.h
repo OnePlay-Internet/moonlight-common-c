@@ -107,6 +107,14 @@ typedef struct _STREAM_CONFIGURATION {
     // in /launch and /resume requests.
     char remoteInputAesKey[16];
     char remoteInputAesIv[16];
+
+    // Allow to adjust timeouts when starting Control Stream
+    // by default peer timeout is set to 10 seconds and limit backoff to 2x RTT
+    // but this not work for oneplay servers when ping is high or network connection is bad.
+    // zero mean use defaults;
+    unsigned int controlStreamTimeoutLimit;
+    unsigned int controlStreamTimeoutMinimum;
+    unsigned int controlStreamTimeoutMaximum;
 } STREAM_CONFIGURATION, *PSTREAM_CONFIGURATION;
 
 // Use this function to zero the stream configuration when allocated on the stack or heap
