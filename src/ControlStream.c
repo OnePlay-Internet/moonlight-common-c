@@ -1375,7 +1375,7 @@ int startControlStream(void) {
         enet_host_flush(client);
         
         // Set the peer timeout to 10 seconds and limit backoff to 2x RTT
-        enet_peer_timeout(peer, 2, 10000, 10000);
+        enet_peer_timeout(peer, 32, 5000, 30000);
     }
     else {
         // NB: Do NOT use ControlPortNumber here. 47995 is correct for these old versions.
