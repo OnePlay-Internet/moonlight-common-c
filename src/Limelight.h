@@ -103,6 +103,33 @@ typedef struct _STREAM_CONFIGURATION {
     // in /launch and /resume requests.
     char remoteInputAesKey[16];
     char remoteInputAesIv[16];
+
+    // enet timeout settings
+    // This info is copied from enet peer.c:
+    //
+    // The timeout parameter control how and when a peer will timeout from a failure to acknowledge
+    // reliable traffic. Timeout values use an exponential backoff mechanism, where if a reliable
+    // packet is not acknowledge within some multiple of the average RTT plus a variance tolerance, 
+    // the timeout will be doubled until it reaches a set limit. If the timeout is thus at this
+    // limit and reliable packets have been sent but not acknowledged within a certain minimum time 
+    // period, the peer will be disconnected. Alternatively, if reliable packets have been sent
+    // but not acknowledged for a certain maximum time period, the peer will be disconnected regardless
+    // of the current timeout limit value.
+    unsigned int timeout_limit;
+    unsigned int timeout_minimum;
+    unsigned int timeout_maximum;
+
+    // enet additinal timeout settings
+    // This info is copied from enet peer.c:
+    //
+    // For networks with high latency, sometimes doubling the round trip timeout is impractical.
+    // If the network delay is 300ms and you double it, you have a 600ms timeout.
+    // But the ping is configured to check every 0.5s. You will not be able to resend ping
+    // and the connection will be terminated.
+    // To avoid this, the round-trip timeout will double until it reaches timeoutLinear.
+    // After that, it will grow linearly.
+    // To disable this behavior, simply set it to be the same or greater than timeoutMaximum.
+    unsigned int timeout_linear;
 } STREAM_CONFIGURATION, *PSTREAM_CONFIGURATION;
 
 // Use this function to zero the stream configuration when allocated on the stack or heap

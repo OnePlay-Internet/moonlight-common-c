@@ -103,7 +103,7 @@ void setRecorderCallbacks(PDECODER_RENDERER_CALLBACKS drCallbacks, PAUDIO_RENDER
 char* getSdpPayloadForStreamConfig(int rtspClientVersion, int* length);
 
 int initializeControlStream(void);
-int startControlStream(void);
+int startControlStream(uint32_t timeout_limit, uint32_t timeout_minimum, uint32_t timeout_maximum, uint32_t timeout_linear);
 int stopControlStream(void);
 void destroyControlStream(void);
 void connectionDetectedFrameLoss(int startFrame, int endFrame);

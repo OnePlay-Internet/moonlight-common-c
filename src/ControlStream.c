@@ -1407,7 +1407,7 @@ bool LiGetEstimatedRttInfo(uint32_t* estimatedRtt, uint32_t* estimatedRttVarianc
 }
 
 // Starts the control stream
-int startControlStream(void) {
+int startControlStream(uint32_t timeout_limit, uint32_t timeout_minimum, uint32_t timeout_maximum, uint32_t timeout_linear) {
     int err;
 
     if (AppVersionQuad[0] >= 5) {
@@ -1473,7 +1473,8 @@ int startControlStream(void) {
         enet_host_flush(client);
         
         // Set the peer timeout to 10 seconds and limit backoff to 2x RTT
-        enet_peer_timeout(peer, 32, 5000, 30000);
+        enet_peer_timeout(peer, timeout_limit, timeout_minimum, timeout_maximum);
+        enet_peer_timeout_linear(peer, timeout_linear);
     }
     else {
         // NB: Do NOT use ControlPortNumber here. 47995 is correct for these old versions.
