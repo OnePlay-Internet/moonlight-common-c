@@ -7,6 +7,8 @@
 // is on by default for debug builds.
 #define FEC_VALIDATION_MODE
 #define FEC_VERBOSE
+// Print more information about video frames
+#define LC_DEBUG_NET
 #endif
 
 // Don't try speculative RFI for 5 minutes after seeing
@@ -21,6 +23,9 @@ void RtpvInitializeQueue(PRTP_VIDEO_QUEUE queue) {
     memset(queue, 0, sizeof(*queue));
 
     queue->currentFrameNumber = 1;
+#if defined(LC_DEBUG_NET)
+    Limelog("Current frame number was reset to 0\n");
+#endif
     queue->multiFecCapable = APP_VERSION_AT_LEAST(7, 1, 431);
 }
 
@@ -528,6 +533,11 @@ static void submitCompletedFrame(PRTP_VIDEO_QUEUE queue) {
 int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_QUEUE_ENTRY packetEntry) {
     if (isBefore16(packet->sequenceNumber, queue->nextContiguousSequenceNumber)) {
         // Reject packets behind our current buffer window
+#if defined(LC_DEBUG_NET)
+        Limelog("Reject packet with sequence number %d behind our current buffer window: %u\n",
+            packet->sequenceNumber,
+            queue->nextContiguousSequenceNumber);
+#endif
         return RTPF_RET_REJECTED;
     }
 
@@ -555,6 +565,11 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
     
     if (isBefore16(nvPacket->frameIndex, queue->currentFrameNumber)) {
         // Reject frames behind our current frame number
+#if defined(LC_DEBUG_NET)
+        Limelog("Reject frame %u behind our current frame number %u\n",
+            nvPacket->frameIndex,
+            queue->currentFrameNumber);
+#endif
         return RTPF_RET_REJECTED;
     }
 
@@ -563,6 +578,12 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
 
     if (nvPacket->frameIndex == queue->currentFrameNumber && fecCurrentBlockNumber < queue->multiFecCurrentBlockNumber) {
         // Reject FEC blocks behind our current block number
+#if defined(LC_DEBUG_NET)
+        Limelog("Reject FEC block %u in frame %u behind our current block number %u\n",
+            fecCurrentBlockNumber,
+            nvPacket->frameIndex,
+            queue->multiFecCurrentBlockNumber);
+#endif
         return RTPF_RET_REJECTED;
     }
 
@@ -587,6 +608,12 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
                 // we must manually advance the queue to the next frame. Parsing this
                 // frame further is not possible.
                 if (queue->currentFrameNumber == nvPacket->frameIndex) {
+#if defined(LC_DEBUG_NET)
+                    Limelog("We just missed a block of this frame %u. Advance the queue to the next frame %u\n",
+                        queue->currentFrameNumber,
+                        queue->currentFrameNumber + 1);
+#endif
+
                     // Discard any unsubmitted buffers from the previous frame
                     purgeListEntries(&queue->pendingFecBlockList);
                     purgeListEntries(&queue->completedFecBlockList);
@@ -634,6 +661,12 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
             }
 
             // We dropped a block of this frame, so we must skip to the next one.
+#if defined(LC_DEBUG_NET)
+            Limelog("We dropped a block of this frame %u, so we must skip to the next one %u\n",
+                nvPacket->frameIndex,
+                nvPacket->frameIndex + 1);
+#endif
+
             queue->currentFrameNumber = nvPacket->frameIndex + 1;
             queue->multiFecCurrentBlockNumber = 0;
             return RTPF_RET_REJECTED;
@@ -663,12 +696,23 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
             }
         }
 
+        if (queue->currentFrameNumber != nvPacket->frameIndex) {
+#if defined(LC_DEBUG_NET)
+            Limelog("Current frame was %u. Recieved packet frame is %u. Set current frame to %u\n",
+                queue->currentFrameNumber,
+                nvPacket->frameIndex,
+                nvPacket->frameIndex);
+#endif
+        }
         queue->currentFrameNumber = nvPacket->frameIndex;
 
         // Tell the control stream logic about this frame, even if we don't end up
         // being able to reconstruct a full frame from it.
         connectionSawFrame(queue->currentFrameNumber);
-        
+#if defined(LC_DEBUG_NET)
+        Limelog("Saw frame %u.\n", queue->currentFrameNumber);
+#endif
+
         queue->bufferFirstRecvTimeMs = PltGetMillis();
         queue->bufferLowestSequenceNumber = U16(packet->sequenceNumber - fecIndex);
         queue->nextContiguousSequenceNumber = queue->bufferLowestSequenceNumber;
@@ -687,6 +731,11 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
     } else if (isBefore16(queue->bufferHighestSequenceNumber, packet->sequenceNumber)) {
         // In rare cases, we get extra parity packets. It's rare enough that it's probably
         // not worth handling, so we'll just drop them.
+#if defined(LC_DEBUG_NET)
+        Limelog("Packet with sequence number %u dropped because of extra parity. Buffer highest sequence number should be %u\n",
+            packet->sequenceNumber,
+            queue->bufferHighestSequenceNumber);
+#endif
         return RTPF_RET_REJECTED;
     }
 
@@ -704,6 +753,9 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
 
     LC_ASSERT((nvPacket->flags & FLAG_EOF) || length - dataOffset == StreamConfig.packetSize);
     if (!queuePacket(queue, packetEntry, packet, length, !isBefore16(packet->sequenceNumber, queue->bufferFirstParitySequenceNumber), false)) {
+#if defined(LC_DEBUG_NET)
+        Limelog("Can't queue packet with sequence number %u\n", packet->sequenceNumber);
+#endif
         return RTPF_RET_REJECTED;
     }
     else {
@@ -739,11 +791,18 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
             queue->receivedParityPackets++;
             LC_ASSERT(queue->receivedParityPackets <= queue->bufferParityPackets);
         }
-        
+
+#if defined(LC_DEBUG_NET)
+        Limelog("Try to submit this frame %u\n", queue->currentFrameNumber);
+#endif
         // Try to submit this frame. If we haven't received enough packets,
         // this will fail and we'll keep waiting.
         if (reconstructFrame(queue) == 0) {
             // Stage the complete FEC block for use once reassembly is complete
+#if defined(LC_DEBUG_NET)
+            Limelog("Frame %u. Stage the complete FEC block for use once reassembly is complete. \n",
+                queue->currentFrameNumber);
+#endif
             stageCompleteFecBlock(queue);
             
             // stageCompleteFecBlock() should have consumed all pending FEC data
@@ -755,6 +814,10 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
             // Otherwise, the frame is complete and we can move on to the next frame.
             if (queue->multiFecCurrentBlockNumber < queue->multiFecLastBlockNumber) {
                 // Move on to the next FEC block for this frame
+#if defined(LC_DEBUG_NET)
+                Limelog("Frame %u. Move on to the next FEC block for this frame. \n",
+                    queue->currentFrameNumber);
+#endif
                 queue->multiFecCurrentBlockNumber++;
             }
             else {
@@ -767,6 +830,11 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
                 LC_ASSERT(queue->completedFecBlockList.count == 0);
 
                 // Continue to the next frame
+#if defined(LC_DEBUG_NET)
+                Limelog("Continue to the next frame %u from %u\n",
+                    queue->currentFrameNumber + 1,
+                    queue->currentFrameNumber);
+#endif
                 queue->currentFrameNumber++;
                 queue->multiFecCurrentBlockNumber = 0;
             }
