@@ -1095,6 +1095,10 @@ void notifyFrameLost(unsigned int frameNumber, bool speculative) {
     // We may not invalidate frames that we've already received
     LC_ASSERT(frameNumber >= startFrameNumber);
 
+#if defined(LC_DEBUG_NET)
+    Limelog("Notify frame %u lost\n", frameNumber);
+#endif
+
     // Drop state and determine if we need an IDR frame or if RFI is okay
     dropFrameState();
 
