@@ -9,6 +9,7 @@
 #define FEC_VERBOSE
 // Print more information about video frames
 #define LC_DEBUG_NET
+#define LC_DEBUG_FRAME
 #endif
 
 // Don't try speculative RFI for 5 minutes after seeing
@@ -533,7 +534,7 @@ static void submitCompletedFrame(PRTP_VIDEO_QUEUE queue) {
 int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_QUEUE_ENTRY packetEntry) {
     if (isBefore16(packet->sequenceNumber, queue->nextContiguousSequenceNumber)) {
         // Reject packets behind our current buffer window
-#if defined(LC_DEBUG_NET)
+#if defined(LC_DEBUG_NET) || defined(LC_DEBUG_FRAME)
         Limelog("Reject packet with sequence number %d behind our current buffer window: %u\n",
             packet->sequenceNumber,
             queue->nextContiguousSequenceNumber);
@@ -555,6 +556,13 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
     nvPacket->frameIndex = LE32(nvPacket->frameIndex);
     nvPacket->fecInfo = LE32(nvPacket->fecInfo);
 
+#if defined(LC_DEBUG_FRAME)
+        Limelog("Current frame is: %u adding packet frame %u streamPacket index: %u\n",
+            queue->currentFrameNumber,
+            nvPacket->frameIndex,
+            nvPacket->streamPacketIndex);
+#endif
+
     // For legacy servers, we'll fixup the reserved data so that it looks like
     // it's a single FEC frame from a multi-FEC capable server. This allows us
     // to make our parsing logic simpler.
@@ -562,7 +570,7 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
         nvPacket->multiFecFlags = 0x10;
         nvPacket->multiFecBlocks = 0x00;
     }
-    
+
     if (isBefore16(nvPacket->frameIndex, queue->currentFrameNumber)) {
         // Reject frames behind our current frame number
 #if defined(LC_DEBUG_NET)
@@ -637,7 +645,7 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
                         queue->bufferDataPackets);
             }
         }
-        
+
         // We must either start on the current FEC block number for the current frame,
         // or block 0 of a new frame.
         uint8_t expectedFecBlockNumber = (queue->currentFrameNumber == nvPacket->frameIndex ? queue->multiFecCurrentBlockNumber : 0);
@@ -804,12 +812,12 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
                 queue->currentFrameNumber);
 #endif
             stageCompleteFecBlock(queue);
-            
+
             // stageCompleteFecBlock() should have consumed all pending FEC data
             LC_ASSERT(queue->pendingFecBlockList.head == NULL);
             LC_ASSERT(queue->pendingFecBlockList.tail == NULL);
             LC_ASSERT(queue->pendingFecBlockList.count == 0);
-            
+
             // If we're not yet at the last FEC block for this frame, move on to the next block.
             // Otherwise, the frame is complete and we can move on to the next frame.
             if (queue->multiFecCurrentBlockNumber < queue->multiFecLastBlockNumber) {
@@ -840,6 +848,9 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
             }
         }
 
+#if defined(LC_DEBUG_NET)
+        Limelog("Block for frame %u queued\n", queue->currentFrameNumber);
+#endif
         return RTPF_RET_QUEUED;
     }
 }
