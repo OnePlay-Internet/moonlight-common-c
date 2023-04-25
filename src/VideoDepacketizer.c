@@ -89,6 +89,9 @@ static void cleanupFrameState(void) {
 // Cleanup frame state and set that we're waiting for an IDR Frame
 static void dropFrameState(void) {
     // This may only be called at frame boundaries
+    if (decodingFrame) {
+        Limelog("dropFrameState() was called not at frame boundaries\n");
+    }
     LC_ASSERT(!decodingFrame);
 
     // We're dropping frame state now
@@ -179,6 +182,9 @@ static bool getAnnexBStartSequence(PBUFFER_DESC current, PBUFFER_DESC startSeq) 
 
 void validateDecodeUnitForPlayback(PDECODE_UNIT decodeUnit) {
     // Frames must always have at least one buffer
+    if (decodeUnit->bufferList == NULL || decodeUnit->fullLength == 0) {
+        Limelog("Frames must always have at least one buffer.\n");
+    }
     LC_ASSERT(decodeUnit->bufferList != NULL);
     LC_ASSERT(decodeUnit->fullLength != 0);
 
@@ -206,16 +212,26 @@ void validateDecodeUnitForPlayback(PDECODE_UNIT decodeUnit) {
             // FIXME: Should we normalize this or something for clients?
         }
         else {
+            Limelog("Frame type is IDR but NegotiatedVideoFormat not supported\n");
             LC_ASSERT(false);
         }
     }
     else {
+        if (decodeUnit->frameType != FRAME_TYPE_PFRAME) {
+            Limelog("Frame type should be P frame or IDR\n");
+        }
         LC_ASSERT(decodeUnit->frameType == FRAME_TYPE_PFRAME);
 
         // P frames always start with picture data
+        if (decodeUnit->bufferList->bufferType != BUFFER_TYPE_PICDATA) {
+            Limelog("P frames should always start with picture data\n");
+        }
         LC_ASSERT(decodeUnit->bufferList->bufferType == BUFFER_TYPE_PICDATA);
 
         // We must not dequeue a P frame before an IDR frame has been successfully processed
+        if (!idrFrameProcessed) {
+            Limelog("We must not dequeue a P frame before an IDR frame has been successfully processed\n");
+        }
         LC_ASSERT(idrFrameProcessed);
     }
 }
@@ -320,6 +336,7 @@ static bool isSeqReferenceFrameStart(PBUFFER_DESC buffer) {
         }
     }
     else {
+        Limelog("No valid negotiated video format found in isSeqReferenceFrameStart()\n");
         LC_ASSERT(false);
         return false;
     }
@@ -339,6 +356,7 @@ static bool isAccessUnitDelimiter(PBUFFER_DESC buffer) {
         return HEVC_NAL_TYPE(startSeq.data[startSeq.offset + startSeq.length]) == HEVC_NAL_TYPE_AUD;
     }
     else {
+        Limelog("No valid negotiated video format found in isAccessUnitDelimiter()\n");
         LC_ASSERT(false);
         return false;
     }
@@ -358,6 +376,7 @@ static bool isSeiNal(PBUFFER_DESC buffer) {
         return HEVC_NAL_TYPE(startSeq.data[startSeq.offset + startSeq.length]) == HEVC_NAL_TYPE_SEI;
     }
     else {
+        Limelog("No valid negotiated video format found in isSeiNal()\n");
         LC_ASSERT(false);
         return false;
     }
@@ -377,6 +396,7 @@ static bool isPictureParameterSetNal(PBUFFER_DESC buffer) {
         return HEVC_NAL_TYPE(startSeq.data[startSeq.offset + startSeq.length]) == HEVC_NAL_TYPE_PPS;
     }
     else {
+        Limelog("No valid negotiated video format found in isPictureParameterSetNal()\n");
         LC_ASSERT(false);
         return false;
     }
@@ -409,6 +429,9 @@ static void skipToNextNal(PBUFFER_DESC buffer) {
     skipToNextNalOrEnd(buffer);
 
     // If we skipped all the data, something has gone horribly wrong
+    if (buffer->length == 0) {
+        Limelog("we skipped all the data, something has gone horribly wrong\n");
+    }
     LC_ASSERT(buffer->length > 0);
 }
 
@@ -426,6 +449,7 @@ static bool isIdrFrameStart(PBUFFER_DESC buffer) {
         return HEVC_NAL_TYPE(startSeq.data[startSeq.offset + startSeq.length]) == HEVC_NAL_TYPE_VPS;
     }
     else {
+        Limelog("No valid negotiated video format found in isIdrFrameStart()\n");
         LC_ASSERT(false);
         return false;
     }
@@ -553,6 +577,7 @@ static int getBufferFlags(char* data, int length) {
         }
     }
     else {
+        Limelog("No valid negotiated video format found in getBufferFlags()\n");
         LC_ASSERT(false);
         return BUFFER_TYPE_PICDATA;
     }
@@ -586,6 +611,9 @@ static void queueFragment(PLENTRY_INTERNAL* existingEntry, char* data, int offse
             entry->entry.data = &data[offset];
 
             // The caller should have already set this up for us
+            if (entry->allocPtr == NULL) {
+                Limelog("allocPtr is NULL in queueFragment()\n");
+            }
             LC_ASSERT(entry->allocPtr != NULL);
 
             // We now own the packet buffer and will manage freeing it
@@ -597,10 +625,16 @@ static void queueFragment(PLENTRY_INTERNAL* existingEntry, char* data, int offse
         nalChainDataLength += entry->entry.length;
 
         if (nalChainTail == NULL) {
+            if (nalChainHead != NULL) {
+                Limelog("nalChainHead not NULL when nalChainTail is NULL\n");
+            }
             LC_ASSERT(nalChainHead == NULL);
             nalChainHead = nalChainTail = (PLENTRY)entry;
         }
         else {
+            if (nalChainHead == NULL) {
+                Limelog("nalChainHead is NULL when nalChainTail is not NULL\n");
+            }
             LC_ASSERT(nalChainHead != NULL);
             nalChainTail->next = (PLENTRY)entry;
             nalChainTail = nalChainTail->next;
@@ -611,6 +645,9 @@ static void queueFragment(PLENTRY_INTERNAL* existingEntry, char* data, int offse
 // Process an RTP Payload using the slow path that handles multiple NALUs per packet
 static void processRtpPayloadSlow(PBUFFER_DESC currentPos, PLENTRY_INTERNAL* existingEntry) {
     // We should not have any NALUs when processing the first packet in an IDR frame
+    if (nalChainHead != NULL || nalChainTail != NULL) {
+        Limelog("We should not have any NALUs when processing the first packet in an IDR frame\n");
+    }
     LC_ASSERT(nalChainHead == NULL);
     LC_ASSERT(nalChainTail == NULL);
 
@@ -657,7 +694,10 @@ static void processRtpPayloadSlow(PBUFFER_DESC currentPos, PLENTRY_INTERNAL* exi
         if (containsPicData) {
             while (currentPos->length != 0) {
                 // Any NALUs we encounter on the way to the end of the packet must be reference frame slices
-                LC_ASSERT(isSeqReferenceFrameStart(currentPos));
+                if (!isSeqReferenceFrameStart(currentPos)) {
+                    Limelog("Any NALUs we encounter on the way to the end of the packet must be reference frame slices");
+                }
+                // LC_ASSERT(isSeqReferenceFrameStart(currentPos));
                 skipToNextNalOrEnd(currentPos);
             }
         }
@@ -724,6 +764,9 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
     flags = videoPacket->flags;
     firstPacket = isFirstPacket(flags, fecCurrentBlockNumber);
 
+    if ((flags & ~(FLAG_SOF | FLAG_EOF | FLAG_CONTAINS_PIC_DATA)) != 0) {
+        Limelog("Paylod is not a SOF, EOF or Data packet\n");
+    }
     LC_ASSERT((flags & ~(FLAG_SOF | FLAG_EOF | FLAG_CONTAINS_PIC_DATA)) == 0);
 
     streamPacketIndex = videoPacket->streamPacketIndex;
@@ -752,6 +795,9 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
     }
     
     // Verify that we didn't receive an incomplete frame
+    if (!(firstPacket ^ decodingFrame)) {
+        Limelog("Received an incomplete frame\n");
+    }
     LC_ASSERT(firstPacket ^ decodingFrame);
     
     // Check sequencing of this frame to ensure we didn't
@@ -776,6 +822,9 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
             dropFrameState();
         }
         else {
+            if (nextFrameNumber != frameIndex) {
+                Limelog("nextFrameNumber != frameIndex\n");
+            }
             LC_ASSERT(nextFrameNumber == frameIndex);
         }
 
@@ -843,6 +892,9 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
                 currentPos.length -= 8;
             }
             else {
+                if (currentPos.data[0] != (char)0x81) {
+                    Limelog("LC_ASSERT(currentPos.data[0] == (char)0x81)");
+                }
                 LC_ASSERT(currentPos.data[0] == (char)0x81);
                 currentPos.offset += 44;
                 currentPos.length -= 44;
@@ -857,6 +909,9 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
                 currentPos.length -= 8;
             }
             else {
+                if (currentPos.data[0] != (char)0x81) {
+                    Limelog("LC_ASSERT(currentPos.data[0] == (char)0x81)\n");
+                }
                 LC_ASSERT(currentPos.data[0] == (char)0x81);
                 currentPos.offset += 41;
                 currentPos.length -= 41;
@@ -871,6 +926,9 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
                 currentPos.length -= 8;
             }
             else {
+                if (currentPos.data[0] != (char)0x81) {
+                    Limelog("LC_ASSERT(currentPos.data[0] == (char)0x81)\n");
+                }
                 LC_ASSERT(currentPos.data[0] == (char)0x81);
                 currentPos.offset += 24;
                 currentPos.length -= 24;
@@ -898,6 +956,7 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
         // The Annex B NALU start prefix must be next
         if (!getAnnexBStartSequence(&currentPos, NULL)) {
             // If we aren't starting on a start prefix, something went wrong.
+            Limelog("we aren't starting on a start prefix, something went wrong.\n");
             LC_ASSERT(false);
 
             // For release builds, we will try to recover by searching for one.
@@ -972,6 +1031,9 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
             return;
         }
 
+        if (waitingForNextSuccessfulFrame) {
+            Limelog("LC_ASSERT(!waitingForNextSuccessfulFrame)");
+        }
         LC_ASSERT(!waitingForNextSuccessfulFrame);
 
         // Carry out any pending state drops. We can't just do this
@@ -1004,6 +1066,9 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
 // that we lost a frame and submit an RFI request.
 void notifyFrameLost(unsigned int frameNumber, bool speculative) {
     // We may not invalidate frames that we've already received
+    if (frameNumber < startFrameNumber) {
+        Limelog("We may not invalidate frames that we've already received\n");
+    }
     LC_ASSERT(frameNumber >= startFrameNumber);
 
 #if defined(LC_DEBUG_NET)
@@ -1015,6 +1080,9 @@ void notifyFrameLost(unsigned int frameNumber, bool speculative) {
 
     // If dropFrameState() determined that RFI was usable, issue it now
     if (!waitingForIdrFrame) {
+        if (!waitingForRefInvalFrame) {
+            Limelog("LC_ASSERT(waitingForRefInvalFrame)\n");
+        }
         LC_ASSERT(waitingForRefInvalFrame);
 
         if (speculative) {
