@@ -5,7 +5,15 @@
 
 #define FIRST_FRAME_PORT 47996
 
-#define RTP_RECV_BUFFER (512 * 1024)
+// By default sunshine uses 512 KB for the receive buffer.
+// But on older devices it is possible that the decoder and network
+// cannot process all received packets. And new packets overwrite
+// the packets already received but not yet processed.
+// Because of this, some frames cannot be decoded.
+// Increase the receive buffer to a larger one: 64MB.
+// Just to be sure it is enough.
+// TODO: find optimal buffer size
+#define RTP_RECV_BUFFER (64 * 1024 * 1024)
 
 static RTP_VIDEO_QUEUE rtpQueue;
 
