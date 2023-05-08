@@ -784,8 +784,13 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
         else {
             // If we receive a packet behind the highest sequence number, but
             // queuePacket() accepted it, we must have received a missing packet.
-            LC_ASSERT(queue->missingPackets > 0);
-            queue->missingPackets--;
+            // LC_ASSERT(queue->missingPackets > 0);
+            if (queue->missingPackets > 0) {
+                queue->missingPackets--;
+            }
+            else {
+                Limelog("Received a packet behind the highest sequence number, but missing packets is zero.\n");
+            }
         }
 
         // We explicitly assert less-than because we know we received at least one packet (this one)
