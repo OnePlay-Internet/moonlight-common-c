@@ -1,8 +1,6 @@
 #include "Limelight-internal.h"
 
 #ifdef LC_DEBUG
-// Print more information about UDP packets
-#define LC_DEBUG_UDP
 // Print more information about dropped UDP packets
 #define LC_DEBUG_UDP_DROPPED
 #endif
