@@ -1,5 +1,10 @@
 #include "Limelight-internal.h"
 
+#ifdef LC_DEBUG
+// Print more information about dropped UDP packets
+#define LC_DEBUG_UDP_DROPPED
+#endif
+
 #define FIRST_FRAME_MAX 1500
 #define FIRST_FRAME_TIMEOUT_SEC 10
 
@@ -101,6 +106,11 @@ static void VideoReceiveThreadProc(void* context) {
         useSelect = false;
     }
 
+#ifdef LC_DEBUG_UDP_DROPPED
+    uint16_t expectedSequenceNumber = 0;
+    uint16_t countNormalPackets = 0;
+#endif
+
     waitingForVideoMs = 0;
     while (!PltIsThreadInterrupted(&receiveThread)) {
         PRTP_PACKET packet;
@@ -159,6 +169,43 @@ static void VideoReceiveThreadProc(void* context) {
         packet->timestamp = BE32(packet->timestamp);
         packet->ssrc = BE32(packet->ssrc);
 
+#ifdef LC_DEBUG_UDP_DROPPED
+        if (expectedSequenceNumber != packet->sequenceNumber) {
+            if (countNormalPackets > 1) {
+                uint16_t index = expectedSequenceNumber >= countNormalPackets
+                                    ? expectedSequenceNumber - countNormalPackets
+                                    : 65535 - countNormalPackets + expectedSequenceNumber;
+                Limelog("Video stream UDP received %u sequenced packets. from %u to %u\n"
+                        , countNormalPackets
+                        , index
+                        , expectedSequenceNumber - 1);
+                countNormalPackets = 1;
+            }
+
+            if (expectedSequenceNumber < packet->sequenceNumber) {
+                auto count = packet->sequenceNumber - expectedSequenceNumber;
+                if (count == 1) {
+                    Limelog("Video stream UDP dropped 1 packet %u\n"
+                        , expectedSequenceNumber);
+                } else if (count > 1) {
+                    Limelog("Video stream UDP dropped %u packets. from %u to %u\n"
+                        , count
+                        , expectedSequenceNumber
+                        , packet->sequenceNumber - 1);
+                }
+            }
+            else {
+                Limelog("Video stream UDP received packet %u that is behind current expected %u\n"
+                        , packet->sequenceNumber
+                        , expectedSequenceNumber);
+            }
+        }
+        else {
+            countNormalPackets++;
+        }
+        expectedSequenceNumber = packet->sequenceNumber + 1;
+#endif
+
         queueStatus = RtpvAddPacket(&rtpQueue, packet, err, (PRTPV_QUEUE_ENTRY)&buffer[receiveSize]);
 
         if (queueStatus == RTPF_RET_QUEUED) {
@@ -166,6 +213,19 @@ static void VideoReceiveThreadProc(void* context) {
             buffer = NULL;
         }
     }
+
+#ifdef LC_DEBUG_UDP_DROPPED
+    if (countNormalPackets > 1) {
+        uint16_t index = expectedSequenceNumber >= countNormalPackets
+                         ? expectedSequenceNumber - countNormalPackets
+                         : 65535 - countNormalPackets + expectedSequenceNumber;
+        Limelog("Video stream UDP received %u sequenced packets. from %u to %u\n"
+        , countNormalPackets
+        , index
+        , expectedSequenceNumber - 1);
+        countNormalPackets = 1;
+    }
+#endif
 
     if (buffer != NULL) {
         free(buffer);
