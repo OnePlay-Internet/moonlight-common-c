@@ -386,6 +386,13 @@ int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION stre
         }
     }
 
+    // For older Android devices connected via Wi-Fi, packet size bigger than 1024 is unstable.
+    // FEC only works in 16 byte chunks. 1024 is a 64*16
+    if (StreamConfig.packetSize > 1024) {
+        StreamConfig.packetSize = 1024;
+    }
+    Limelog("Packet size for streaming is set to: %d\n", StreamConfig.packetSize);
+
     Limelog("Initializing audio stream...");
     ListenerCallbacks.stageStarting(STAGE_AUDIO_STREAM_INIT);
     err = initializeAudioStream();
