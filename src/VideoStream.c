@@ -1,10 +1,13 @@
 #include "Limelight-internal.h"
+#include <inttypes.h>
 
 #ifdef LC_DEBUG
 // Print more information about UDP packets
 #define LC_DEBUG_UDP
 // Print more information about dropped UDP packets
 #define LC_DEBUG_UDP_DROPPED
+// Log information about delays between UDP packets
+#define LC_DEBUG_UDP_PACER
 #endif
 
 #define FIRST_FRAME_MAX 1500
@@ -113,6 +116,10 @@ static void VideoReceiveThreadProc(void* context) {
     uint16_t countNormalPackets = 0;
 #endif
 
+#ifdef LC_DEBUG_UDP_PACER
+    uint64_t startMicroseconds = 0;
+#endif
+
     waitingForVideoMs = 0;
     while (!PltIsThreadInterrupted(&receiveThread)) {
         PRTP_PACKET packet;
@@ -147,6 +154,16 @@ static void VideoReceiveThreadProc(void* context) {
             // Receive timed out; try again
             continue;
         }
+
+#ifdef LC_DEBUG_UDP_PACER
+        auto endMicrosecnods = PltGetMicros();
+        if (startMicroseconds == 0) {
+            startMicroseconds = endMicrosecnods;
+        }
+        uint64_t delta = endMicrosecnods - startMicroseconds;
+        startMicroseconds = endMicrosecnods;
+        Limelog("Delta between UDP packets: %" PRIu64 " microseconds\n", delta);
+#endif
 
         if (!receivedDataFromPeer) {
             receivedDataFromPeer = true;
