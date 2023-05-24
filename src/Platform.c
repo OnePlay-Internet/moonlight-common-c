@@ -411,6 +411,22 @@ uint64_t PltGetMillis(void) {
 #endif
 }
 
+uint64_t PltGetMicros(void) {
+#if defined(CLOCK_MONOTONIC) && !defined(NO_CLOCK_GETTIME)
+    struct timespec tv;
+
+    clock_gettime(CLOCK_MONOTONIC, &tv);
+
+    return ((uint64_t)tv.tv_sec * 1000000) + (tv.tv_nsec / 1000);
+#else
+    struct timeval tv;
+
+    gettimeofday(&tv, NULL);
+
+    return ((uint64_t)tv.tv_sec * 1000000) + (tv.tv_usec);
+#endif
+}
+
 int initializePlatform(void) {
     int err;
 

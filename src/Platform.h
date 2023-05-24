@@ -120,3 +120,4 @@ int initializePlatform(void);
 void cleanupPlatform(void);
 
 uint64_t PltGetMillis(void);
+uint64_t PltGetMicros(void);
