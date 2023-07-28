@@ -73,6 +73,10 @@ void initializeVideoDepacketizer(int pktSize) {
 
 // Free the NAL chain
 static void cleanupFrameState(void) {
+#ifdef LC_DEBUG_DEPACKETIZER
+    Limelog("Cleanup frame state\n");
+#endif
+
     PLENTRY_INTERNAL lastEntry;
 
     while (nalChainHead != NULL) {
@@ -88,6 +92,10 @@ static void cleanupFrameState(void) {
 
 // Cleanup frame state and set that we're waiting for an IDR Frame
 static void dropFrameState(void) {
+#ifdef LC_DEBUG_DEPACKETIZER
+    Limelog("Drop frame state!\n");
+#endif
+
     // This may only be called at frame boundaries
     if (decodingFrame) {
         Limelog("dropFrameState() was called not at frame boundaries\n");
@@ -101,13 +109,26 @@ static void dropFrameState(void) {
         // We'll need an IDR frame now if we're in non-RFI mode, if we've never
         // received an IDR frame, or if we explicitly need an IDR frame.
         waitingForIdrFrame = true;
+
+#ifdef LC_DEBUG_DEPACKETIZER
+        Limelog("Set waiting for IDR frame. strictIdrFrameWait=%d, idrFrameProcessed=%d, waitingForIdrFrame=%d\n",
+                strictIdrFrameWait, idrFrameProcessed, waitingForIdrFrame);
+#endif
     }
     else {
         waitingForRefInvalFrame = true;
+
+#ifdef LC_DEBUG_DEPACKETIZER
+        Limelog("Set waiting for Ref Invalidate frame. strictIdrFrameWait=%d, idrFrameProcessed=%d, waitingForIdrFrame=%d\n",
+                strictIdrFrameWait, idrFrameProcessed, waitingForIdrFrame);
+#endif
     }
 
     // Count the number of consecutive frames dropped
     consecutiveFrameDrops++;
+#ifdef LC_DEBUG_DEPACKETIZER
+    Limelog("Consecutive frame drops: %d\n", consecutiveFrameDrops);
+#endif
 
     // If we reach our limit, immediately request an IDR frame and reset
     if (consecutiveFrameDrops == CONSECUTIVE_DROP_LIMIT) {
@@ -1070,6 +1091,10 @@ void notifyFrameLost(unsigned int frameNumber, bool speculative) {
         Limelog("We may not invalidate frames that we've already received\n");
     }
     LC_ASSERT(frameNumber >= startFrameNumber);
+
+#ifdef LC_DEBUG_DEPACKETIZER
+    Limelog("Notify frame %u lost\n", frameNumber);
+#endif
 
     // Drop state and determine if we need an IDR frame or if RFI is okay
     dropFrameState();

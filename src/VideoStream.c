@@ -5,8 +5,8 @@
 #define LC_DEBUG_UDP_DROPPED
 #endif
 
-#define FIRST_FRAME_MAX 1500
-#define FIRST_FRAME_TIMEOUT_SEC 10
+#define FIRST_FRAME_MAX 5000
+#define FIRST_FRAME_TIMEOUT_SEC 30
 
 #define FIRST_FRAME_PORT 47996
 
@@ -183,7 +183,7 @@ static void VideoReceiveThreadProc(void* context) {
             }
 
             if (expectedSequenceNumber < packet->sequenceNumber) {
-                auto count = packet->sequenceNumber - expectedSequenceNumber;
+                uint16_t count = packet->sequenceNumber - expectedSequenceNumber;
                 if (count == 1) {
                     Limelog("Video stream UDP dropped 1 packet %u\n"
                         , expectedSequenceNumber);
@@ -211,6 +211,10 @@ static void VideoReceiveThreadProc(void* context) {
         if (queueStatus == RTPF_RET_QUEUED) {
             // The queue owns the buffer
             buffer = NULL;
+        } else {
+#ifdef LC_DEBUG_UDP_DROPPED
+            Limelog("UDP packet %u is not queued by Depacketized\n", packet->sequenceNumber);
+#endif
         }
     }
 
