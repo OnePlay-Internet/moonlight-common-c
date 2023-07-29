@@ -3,6 +3,8 @@
 // Uncomment to test 3 byte Annex B start sequences with GFE
 //#define FORCE_3_BYTE_START_SEQUENCES
 
+#define LC_DEBUG_DEPACKETIZER
+
 static PLENTRY nalChainHead;
 static PLENTRY nalChainTail;
 static int nalChainDataLength;
@@ -103,6 +105,9 @@ static void dropFrameState(void) {
     LC_ASSERT(!decodingFrame);
 
     // We're dropping frame state now
+#ifdef LC_DEBUG_DEPACKETIZER
+    Limelog("dropStatePending set to true\n");
+#endif    
     dropStatePending = false;
 
     if (strictIdrFrameWait || !idrFrameProcessed || waitingForIdrFrame) {
@@ -132,12 +137,15 @@ static void dropFrameState(void) {
 
     // If we reach our limit, immediately request an IDR frame and reset
     if (consecutiveFrameDrops == CONSECUTIVE_DROP_LIMIT) {
-        Limelog("Reached consecutive drop limit\n");
+        Limelog("Reached consecutive drop limit.\n");
 
         // Restart the count
         consecutiveFrameDrops = 0;
 
         // Request an IDR frame
+#ifdef LC_DEBUG_DEPACKETIZER
+        Limelog("Request an IDR frame.\n");
+#endif
         waitingForIdrFrame = true;
         LiRequestIdrFrame();
     }
@@ -522,6 +530,9 @@ static void reassembleFrame(int frameNumber) {
                     Limelog("Video decode unit queue overflow\n");
 
                     // RFI recovery is not supported here
+#ifdef LC_DEBUG_DEPACKETIZER
+                    Limelog("RFI recovery is not supported here. Request an IDR frame.\n");
+#endif
                     waitingForIdrFrame = true;
 
                     // Clear NAL state for the frame that we failed to enqueue
@@ -694,9 +705,15 @@ static void processRtpPayloadSlow(PBUFFER_DESC currentPos, PLENTRY_INTERNAL* exi
 
         // Now we're decoding a frame
         decodingFrame = true;
+#ifdef LC_DEBUG_DEPACKETIZER
+        Limelog("Now we're decoding a frame.\n");
+#endif
 
         if (isSeqReferenceFrameStart(currentPos)) {
             // No longer waiting for an IDR frame
+#ifdef LC_DEBUG_DEPACKETIZER
+            Limelog("No longer waiting for an IDR frame.\n");
+#endif
             waitingForIdrFrame = false;
             waitingForRefInvalFrame = false;
 
@@ -706,9 +723,16 @@ static void processRtpPayloadSlow(PBUFFER_DESC currentPos, PLENTRY_INTERNAL* exi
             // Use the cached LENTRY for this NALU since it will be
             // the bulk of the data in this packet.
             containsPicData = true;
+        } else if (waitingForIdrFrame || waitingForRefInvalFrame) {
+#ifdef LC_DEBUG_DEPACKETIZER
+            Limelog("Waiting for an IDR frame but frame is not a start frame. Still waiting for IDR frame.\n");
+#endif
         }
 
         // Move to the next NALU
+#ifdef LC_DEBUG_DEPACKETIZER
+        Limelog("Move to the next NALU.\n");
+#endif
         skipToNextNalOrEnd(currentPos);
 
         // If this is the picture data, we expect it to extend to the end of the packet
@@ -719,6 +743,10 @@ static void processRtpPayloadSlow(PBUFFER_DESC currentPos, PLENTRY_INTERNAL* exi
                     Limelog("Any NALUs we encounter on the way to the end of the packet must be reference frame slices");
                 }
                 // LC_ASSERT(isSeqReferenceFrameStart(currentPos));
+
+#ifdef LC_DEBUG_DEPACKETIZER
+                Limelog("Move to the next NALU.\n");
+#endif
                 skipToNextNalOrEnd(currentPos);
             }
         }
@@ -733,6 +761,10 @@ static void processRtpPayloadSlow(PBUFFER_DESC currentPos, PLENTRY_INTERNAL* exi
 // Dumps the decode unit queue and ensures the next frame submitted to the decoder will be
 // an IDR frame
 void requestDecoderRefresh(void) {
+#ifdef LC_DEBUG_DEPACKETIZER
+    Limelog("Request decoder refresh. Waiting for IDR Frame. Dumps the decode unit queue and ensures the next frame submitted to the decoder will be an IDR frame.\n");
+#endif
+    
     // Wait for the next IDR frame
     waitingForIdrFrame = true;
     
@@ -744,6 +776,9 @@ void requestDecoderRefresh(void) {
     // it may be trying to queue DUs and we'll nuke
     // the state out from under it.
     dropStatePending = true;
+#ifdef LC_DEBUG_DEPACKETIZER
+    Limelog("Request the receive thread drop its state on the next call. dropStatePending set to true\n");
+#endif    
     
     // Request the IDR frame
     LiRequestIdrFrame();
@@ -839,6 +874,9 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
             nextFrameNumber = frameIndex;
 
             // Wait until next complete frame
+#ifdef LC_DEBUG_DEPACKETIZER
+            Limelog("Wait until next complete frame\n");
+#endif
             waitingForNextSuccessfulFrame = true;
             dropFrameState();
         }
@@ -1023,11 +1061,17 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
 
     if ((flags & FLAG_EOF) && fecCurrentBlockNumber == fecLastBlockNumber) {
         // Move on to the next frame
+#ifdef LC_DEBUG_DEPACKETIZER
+        Limelog("Move on to the next fram.e\n");
+#endif
         decodingFrame = false;
         nextFrameNumber = frameIndex + 1;
 
         // If we can't submit this frame due to a discontinuity in the bitstream,
         // inform the host (if needed) and drop the data.
+#ifdef LC_DEBUG_DEPACKETIZER
+        Limelog("We can't submit this frame due to a discontinuity in the bitstream.\n");
+#endif
         if (waitingForIdrFrame || waitingForRefInvalFrame) {
             // IDR wait takes priority over RFI wait (and an IDR frame will satisfy both)
             if (waitingForIdrFrame) {
@@ -1069,6 +1113,9 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
                 // otherwise we'll lose this IDR frame without another in flight
                 // and have to wait until we hit our consecutive drop limit to
                 // request a new one (potentially several seconds).
+#ifdef LC_DEBUG_DEPACKETIZER
+                Limelog("Don't drop the frame state because this frame is an IDR frame itself. dropStatePending set to false\n");
+#endif
                 dropStatePending = false;
             }
             else {

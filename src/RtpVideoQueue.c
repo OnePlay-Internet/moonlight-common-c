@@ -825,10 +825,12 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
 #endif
             }
         } else {
+/*
 #ifdef LC_DEBUG_DEPACKETIZER
             Limelog("reconstructFrame failed for packet %u. waiting for more packets\n",
                     packet->sequenceNumber);
 #endif
+*/
         }
 
         return RTPF_RET_QUEUED;
