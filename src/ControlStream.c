@@ -3,6 +3,8 @@
 // This is a private header, but it just contains some time macros
 #include <enet/time.h>
 
+#define LC_DEBUG_DEPACKETIZER
+
 // NV control stream packet header for TCP
 typedef struct _NVCTL_TCP_PACKET_HEADER {
     unsigned short type;
@@ -337,6 +339,10 @@ void queueFrameInvalidationTuple(int startFrame, int endFrame) {
 
 // Request an IDR frame on demand by the decoder
 void LiRequestIdrFrame(void) {
+#ifdef LC_DEBUG_DEPACKETIZER
+    Limelog("LiRequestIdrFrame()\n");
+#endif
+
     // Any reference frame invalidation requests should be dropped now.
     // We require a full IDR frame to recover.
     freeBasicLbqList(LbqFlushQueueItems(&invalidReferenceFrameTuples));
@@ -347,11 +353,17 @@ void LiRequestIdrFrame(void) {
 
 // Invalidate reference frames lost by the network
 void connectionDetectedFrameLoss(int startFrame, int endFrame) {
+#ifdef LC_DEBUG_DEPACKETIZER
+    Limelog("connectionDetectedFrameLoss from %d to %d\n", startFrame, endFrame);
+#endif
     queueFrameInvalidationTuple(startFrame, endFrame);
 }
 
 // When we receive a frame, update the number of our current frame
 void connectionReceivedCompleteFrame(int frameIndex) {
+#ifdef LC_DEBUG_DEPACKETIZER
+    Limelog("We receive a frame %d, update the number of our current frame\n", frameIndex);
+#endif
     lastGoodFrame = frameIndex;
     intervalGoodFrameCount++;
 }

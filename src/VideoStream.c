@@ -5,6 +5,8 @@
 #define LC_DEBUG_UDP_DROPPED
 #endif
 
+#defin LC_DEBUG_DEPACKETIZER
+
 #define FIRST_FRAME_MAX 5000
 #define FIRST_FRAME_TIMEOUT_SEC 30
 
@@ -238,6 +240,9 @@ static void VideoReceiveThreadProc(void* context) {
 
 void notifyKeyFrameReceived(void) {
     // Remember that we got a full frame successfully
+#ifdef LC_DEBUG_DEPACKETIZER
+    Limelog("notifyKeyFrameReceived. Remember that we got a full frame successfull\n");
+#endif
     receivedFullFrame = true;
 }
 

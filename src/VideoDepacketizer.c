@@ -325,6 +325,9 @@ void LiCompleteVideoFrame(VIDEO_FRAME_HANDLE handle, int drStatus) {
     else if (drStatus == DR_OK && qdu->decodeUnit.frameType == FRAME_TYPE_IDR) {
         // Remember that the IDR frame was processed. We can now use
         // reference frame invalidation.
+#ifdef LC_DEBUG_DEPACKETIZER
+        Limelog("Remember that the IDR frame was processed. We can now use reference frame invalidation.\n");
+#endif
         idrFrameProcessed = true;
     }
 
@@ -486,6 +489,10 @@ static bool isIdrFrameStart(PBUFFER_DESC buffer) {
 
 // Reassemble the frame with the given frame number
 static void reassembleFrame(int frameNumber) {
+#ifdef LC_DEBUG_DEPACKETIZER
+    Limelog("reassembleFrame %d\n", frameNumber);
+#endif
+
     if (nalChainHead != NULL) {
         QUEUED_DECODE_UNIT qduDS;
         PQUEUED_DECODE_UNIT qdu;
@@ -553,6 +560,9 @@ static void reassembleFrame(int frameNumber) {
             }
             else {
                 // Submit the frame to the decoder
+#ifdef LC_DEBUG_DEPACKETIZER
+                Limelog("Submit the frame %d to the decoder\n", frameNumber);
+#endif
                 validateDecodeUnitForPlayback(&qdu->decodeUnit);
                 LiCompleteVideoFrame(qdu, VideoCallbacks.submitDecodeUnit(&qdu->decodeUnit));
             }
@@ -718,6 +728,9 @@ static void processRtpPayloadSlow(PBUFFER_DESC currentPos, PLENTRY_INTERNAL* exi
             waitingForRefInvalFrame = false;
 
             // Cancel any pending IDR frame request
+#ifdef LC_DEBUG_DEPACKETIZER
+            Limelog("Cancel any pending IDR frame request. waitingForNextSuccessfulFrame set to false\n");
+#endif
             waitingForNextSuccessfulFrame = false;
 
             // Use the cached LENTRY for this NALU since it will be
@@ -737,6 +750,9 @@ static void processRtpPayloadSlow(PBUFFER_DESC currentPos, PLENTRY_INTERNAL* exi
 
         // If this is the picture data, we expect it to extend to the end of the packet
         if (containsPicData) {
+#ifdef LC_DEBUG_DEPACKETIZER
+            Limelog("this is the picture data, we expect it to extend to the end of the packet\n");
+#endif
             while (currentPos->length != 0) {
                 // Any NALUs we encounter on the way to the end of the packet must be reference frame slices
                 if (!isSeqReferenceFrameStart(currentPos)) {
@@ -753,6 +769,9 @@ static void processRtpPayloadSlow(PBUFFER_DESC currentPos, PLENTRY_INTERNAL* exi
 
         // To minimize copies, we'll allocate for SPS, PPS, and VPS to allow
         // us to reuse the packet buffer for the picture data in the I-frame.
+#ifdef LC_DEBUG_DEPACKETIZER
+        Limelog("queueFragment. To minimize copies, we'll allocate for SPS, PPS, and VPS to allow us to reuse the packet buffer for the picture data in the I-frame.\n");
+#endif
         queueFragment(containsPicData ? existingEntry : NULL,
                       currentPos->data, start, currentPos->offset - start);
     }
@@ -829,6 +848,9 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
     
     // Drop packets from a previously corrupt frame
     if (isBefore32(frameIndex, nextFrameNumber)) {
+#ifdef LC_DEBUG_DEPACKETIZER
+        Limelog("Drop packets from a previously corrupt frame\n");
+#endif
         return;
     }
 
@@ -852,7 +874,7 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
     
     // Verify that we didn't receive an incomplete frame
     if (!(firstPacket ^ decodingFrame)) {
-        Limelog("Received an incomplete frame\n");
+        Limelog("Received an incomplete frame: %d\n", frameIndex);
     }
     LC_ASSERT(firstPacket ^ decodingFrame);
     
@@ -875,7 +897,7 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
 
             // Wait until next complete frame
 #ifdef LC_DEBUG_DEPACKETIZER
-            Limelog("Wait until next complete frame\n");
+            Limelog("Wait until next complete frame. waitingForNextSuccessfulFrame set to true\n");
 #endif
             waitingForNextSuccessfulFrame = true;
             dropFrameState();
@@ -922,6 +944,9 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
                             frameIndex,
                             currentPos.data[currentPos.offset + 3] == 5 ? "P" : "I");
                     waitingForRefInvalFrame = false;
+#ifdef LC_DEBUG_DEPACKETIZER
+                    Limelog("waitingForNextSuccessfulFrame set to false\n");
+#endif
                     waitingForNextSuccessfulFrame = false;
                 }
                 break;
@@ -935,9 +960,15 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
         }
         else {
             // Hope for the best with older servers
+#ifdef LC_DEBUG_DEPACKETIZER
+            Limelog("Hope for the best with older servers\n");
+#endif
             if (waitingForRefInvalFrame) {
                 connectionDetectedFrameLoss(startFrameNumber, frameIndex - 1);
                 waitingForRefInvalFrame = false;
+#ifdef LC_DEBUG_DEPACKETIZER
+                Limelog("waitingForNextSuccessfulFrame set to false\n");
+#endif
                 waitingForNextSuccessfulFrame = false;
             }
         }
@@ -1040,6 +1071,9 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
     if (firstPacket && isIdrFrameStart(&currentPos))
     {
         // SPS and PPS prefix is padded between NALs, so we must decode it with the slow path
+#ifdef LC_DEBUG_DEPACKETIZER
+        Limelog("SPS and PPS prefix is padded between NALs, so we must decode it with the slow path\n");
+#endif
         processRtpPayloadSlow(&currentPos, existingEntry);
     }
     else
@@ -1047,6 +1081,9 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
         // Intel's H.264 Media Foundation encoder prepends a PPS to each P-frame.
         // Skip it to avoid confusing clients.
         if (firstPacket && isPictureParameterSetNal(&currentPos)) {
+#ifdef LC_DEBUG_DEPACKETIZER
+            Limelog("Intel's H.264 Media Foundation encoder prepends a PPS to each P-frame. Skip it to avoid confusing clients.\n");
+#endif
             skipToNextNal(&currentPos);
         }
 
@@ -1056,22 +1093,24 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
             currentPos.length--;
         }
 #endif
+
+#ifdef LC_DEBUG_DEPACKETIZER
+        Limelog("Fast path: queueFragment.\n");
+#endif
+
         queueFragment(existingEntry, currentPos.data, currentPos.offset, currentPos.length);
     }
 
     if ((flags & FLAG_EOF) && fecCurrentBlockNumber == fecLastBlockNumber) {
         // Move on to the next frame
-#ifdef LC_DEBUG_DEPACKETIZER
-        Limelog("Move on to the next fram.e\n");
-#endif
         decodingFrame = false;
         nextFrameNumber = frameIndex + 1;
+#ifdef LC_DEBUG_DEPACKETIZER
+        Limelog("Move on to the next frame %u .\n", nextFrameNumber);
+#endif
 
         // If we can't submit this frame due to a discontinuity in the bitstream,
         // inform the host (if needed) and drop the data.
-#ifdef LC_DEBUG_DEPACKETIZER
-        Limelog("We can't submit this frame due to a discontinuity in the bitstream.\n");
-#endif
         if (waitingForIdrFrame || waitingForRefInvalFrame) {
             // IDR wait takes priority over RFI wait (and an IDR frame will satisfy both)
             if (waitingForIdrFrame) {
@@ -1081,6 +1120,9 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
                 // detection of the recovery of the network. Requesting an IDR frame while
                 // the network is unstable will just contribute to congestion collapse.
                 if (waitingForNextSuccessfulFrame) {
+#ifdef LC_DEBUG_DEPACKETIZER
+                    Limelog("Requesting an IDR frame while the network is unstable will just contribute to congestion collapse.");
+#endif
                     LiRequestIdrFrame();
                 }
             }
@@ -1091,6 +1133,9 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
                 connectionDetectedFrameLoss(startFrameNumber, frameIndex);
             }
 
+#ifdef LC_DEBUG_DEPACKETIZER
+            Limelog("We can't submit this frame due to a discontinuity in the bitstream. waitingForNextSuccessfulFrame = false\n");
+#endif
             waitingForNextSuccessfulFrame = false;
             dropFrameState();
             return;

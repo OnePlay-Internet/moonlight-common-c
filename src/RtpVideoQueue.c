@@ -523,6 +523,10 @@ static void submitCompletedFrame(PRTP_VIDEO_QUEUE queue) {
 
         // Submit this packet for decoding. It will own freeing the entry now.
         removeEntryFromList(&queue->completedFecBlockList, entry);
+
+#ifdef LC_DEBUG_DEPACKETIZER
+        Limelog("Submit this frame for decoding. sequence number: %u", entry->packet->sequenceNumber);
+#endif
         queueRtpPacket(entry);
     }
 }
@@ -562,14 +566,19 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
     if (isBefore16(nvPacket->frameIndex, queue->currentFrameNumber)) {
         // Reject frames behind our current frame number
 #ifdef LC_DEBUG_DEPACKETIZER
-        Limelog("Reject frame %u behind our current frame number %u\n",
-                nvPacket->frameIndex, queue->currentFrameNumber);
+        Limelog("Reject packet %u for frame %u behind our current frame number %u\n",
+                packet->sequenceNumber, nvPacket->frameIndex, queue->currentFrameNumber);
 #endif
         return RTPF_RET_REJECTED;
     }
 
     uint32_t fecIndex = (nvPacket->fecInfo & 0x3FF000) >> 12;
     uint8_t fecCurrentBlockNumber = (nvPacket->multiFecBlocks >> 4) & 0x3;
+
+#ifdef LC_DEBUG_DEPACKETIZER
+    Limelog("Packet %u is for frame %u. Stream packet index is %u\n",
+            packet->sequenceNumber, nvPacket->frameIndex, nvPacket->streamPacketIndex);
+#endif
 
     if (nvPacket->frameIndex == queue->currentFrameNumber && fecCurrentBlockNumber < queue->multiFecCurrentBlockNumber) {
         // Reject FEC blocks behind our current block number
@@ -586,6 +595,9 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
             queue->multiFecCurrentBlockNumber != fecCurrentBlockNumber) {
         if (queue->pendingFecBlockList.count != 0) {
             // Report the final status of the FEC queue before dropping this frame
+#ifdef LC_DEBUG_DEPACKETIZER
+            Limelog("Report the final status of the FEC queue before dropping this frame\n");
+#endif
             reportFinalFrameFecStatus(queue);
 
             if (queue->multiFecLastBlockNumber != 0) {
@@ -635,6 +647,9 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
         uint8_t expectedFecBlockNumber = (queue->currentFrameNumber == nvPacket->frameIndex ? queue->multiFecCurrentBlockNumber : 0);
         if (fecCurrentBlockNumber != expectedFecBlockNumber) {
             // Report the final status of the FEC queue before dropping this frame
+#ifdef LC_DEBUG_DEPACKETIZER
+            Limelog("Report the final status of the FEC queue before dropping this frame\n");
+#endif
             reportFinalFrameFecStatus(queue);
 
             Limelog("Unrecoverable frame %d: lost FEC blocks %d to %d\n",
@@ -658,6 +673,10 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
 #endif
 
             // We dropped a block of this frame, so we must skip to the next one.
+#ifdef LC_DEBUG_DEPACKETIZER
+            Limelog("We dropped a block of this frame, so we must skip to the next one. queue->currentFrameNumber was %u\n",
+                    queue->currentFrameNumber);
+#endif
             queue->currentFrameNumber = nvPacket->frameIndex + 1;
             queue->multiFecCurrentBlockNumber = 0;
             return RTPF_RET_REJECTED;
@@ -691,6 +710,10 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
 
         // Tell the control stream logic about this frame, even if we don't end up
         // being able to reconstruct a full frame from it.
+#ifdef LC_DEBUG_DEPACKETIZER
+        Limelog("Tell the control stream logic about this frame %u, even if we don't end up being able to reconstruct a full frame from it.\n",
+                queue->currentFrameNumber);
+#endif
         connectionSawFrame(queue->currentFrameNumber);
         
         queue->bufferFirstRecvTimeMs = PltGetMillis();
@@ -805,11 +828,11 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
             }
             else {
                 // Submit all FEC blocks to the depacketizer
-                submitCompletedFrame(queue);
 #ifdef LC_DEBUG_DEPACKETIZER
                 Limelog("Submit all FEC blocks to the depacketizer for this frame %u\n",
                         queue->currentFrameNumber);
 #endif
+                submitCompletedFrame(queue);
 
                 // submitCompletedFrame() should have consumed all completed FEC data
                 LC_ASSERT(queue->completedFecBlockList.head == NULL);
@@ -825,12 +848,10 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
 #endif
             }
         } else {
-/*
 #ifdef LC_DEBUG_DEPACKETIZER
             Limelog("reconstructFrame failed for packet %u. waiting for more packets\n",
                     packet->sequenceNumber);
 #endif
-*/
         }
 
         return RTPF_RET_QUEUED;
