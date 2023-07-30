@@ -318,6 +318,10 @@ void LiCompleteVideoFrame(VIDEO_FRAME_HANDLE handle, int drStatus) {
     PQUEUED_DECODE_UNIT qdu = handle;
     PLENTRY_INTERNAL lastEntry;
 
+#ifdef LC_DEBUG_DEPACKETIZER
+    Limelog("LiCompleteVideoFrame()\n");
+#endif
+
     if (drStatus == DR_NEED_IDR) {
         Limelog("Requesting IDR frame on behalf of DR\n");
         requestDecoderRefresh();
@@ -825,6 +829,10 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
     uint8_t fecCurrentBlockNumber;
     uint8_t fecLastBlockNumber;
 
+#ifdef LC_DEBUG_DEPACKETIZER
+    Limelog("processRtpPayload() for frame %d", videoPacket->frameIndex);
+#endif
+
     // Mask the top 8 bits from the SPI
     videoPacket->streamPacketIndex >>= 8;
     videoPacket->streamPacketIndex &= 0xFFFFFF;
@@ -1106,7 +1114,7 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
         decodingFrame = false;
         nextFrameNumber = frameIndex + 1;
 #ifdef LC_DEBUG_DEPACKETIZER
-        Limelog("Move on to the next frame %u .\n", nextFrameNumber);
+        Limelog("Move on to the next frame %u\n", nextFrameNumber);
 #endif
 
         // If we can't submit this frame due to a discontinuity in the bitstream,
@@ -1220,6 +1228,10 @@ void queueRtpPacket(PRTPV_QUEUE_ENTRY queueEntryPtr) {
 
     LC_ASSERT(!queueEntry.isParity);
     LC_ASSERT(queueEntry.receiveTimeMs != 0);
+
+#ifdef LC_DEBUG_DEPACKETIZER
+    Limelog("queueRtpPacket() packet->sequenceNumber = %d", queueEntryPtr->packet->sequenceNumber);
+#endif
 
     dataOffset = sizeof(*queueEntry.packet);
     if (queueEntry.packet->header & FLAG_EXTENSION) {
