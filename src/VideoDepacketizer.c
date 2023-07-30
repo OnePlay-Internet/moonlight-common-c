@@ -350,14 +350,31 @@ void LiCompleteVideoFrame(VIDEO_FRAME_HANDLE handle, int drStatus) {
 static bool isSeqReferenceFrameStart(PBUFFER_DESC buffer) {
     BUFFER_DESC startSeq;
 
+#ifdef LC_DEBUG_DEPACKETIZER
+    Limelog("isSeqReferenceFrameStart() h264=%d h265=%d\n"
+        , (NegotiatedVideoFormat & VIDEO_FORMAT_MASK_H264)
+        , (NegotiatedVideoFormat & VIDEO_FORMAT_MASK_H265));
+#endif
+
     if (!getAnnexBStartSequence(buffer, &startSeq)) {
+#ifdef LC_DEBUG_DEPACKETIZER
+        Limelog("getAnnexBStartSequence() returned false\n");
+#endif
         return false;
     }
 
     if (NegotiatedVideoFormat & VIDEO_FORMAT_MASK_H264) {
+#ifdef LC_DEBUG_DEPACKETIZER
+        unsigned int nalType = H264_NAL_TYPE(startSeq.data[startSeq.offset + startSeq.length]);
+        Limelog("h264 NAL type = %d\n", nalType);
+#endif
         return H264_NAL_TYPE(startSeq.data[startSeq.offset + startSeq.length]) == 5;
     }
     else if (NegotiatedVideoFormat & VIDEO_FORMAT_MASK_H265) {
+#ifdef LC_DEBUG_DEPACKETIZER
+        unsigned int nalType = H264_NAL_TYPE(startSeq.data[startSeq.offset + startSeq.length]);
+        Limelog("h265 NAL type = %d\n", nalType);
+#endif
         switch (HEVC_NAL_TYPE(startSeq.data[startSeq.offset + startSeq.length])) {
             case 16:
             case 17:
