@@ -1116,9 +1116,9 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
 #ifdef LC_DEBUG_DEPACKETIZER
     if (firstPacket) {
         BUFFER_DESC startSeq;
-        bool isAnnexB = getAnnexBStartSequence(buffer, &startSeq);
+        bool isAnnexB = getAnnexBStartSequence(&currentPos, &startSeq);
         bool isIdr = isIdrFrameStart(&currentPos);
-        bool isPPS = isPicturePrameterSetNal(&currentPos);
+        bool isPPS = isPictureParameterSetNal(&currentPos);
         bool isSei = isSeiNal(&currentPos);
         bool isAUD = isAccessUnitDelimiter(&currentPos);
         bool isSRF = isSeqReferenceFrameStart(&currentPos);
