@@ -846,10 +846,6 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
     uint8_t fecCurrentBlockNumber;
     uint8_t fecLastBlockNumber;
 
-#ifdef LC_DEBUG_DEPACKETIZER
-    Limelog("processRtpPayload() for frame %d", videoPacket->frameIndex);
-#endif
-
     // Mask the top 8 bits from the SPI
     videoPacket->streamPacketIndex >>= 8;
     videoPacket->streamPacketIndex &= 0xFFFFFF;
@@ -863,6 +859,17 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
     frameIndex = videoPacket->frameIndex;
     flags = videoPacket->flags;
     firstPacket = isFirstPacket(flags, fecCurrentBlockNumber);
+    int isFirstPacketEx = (flags & FLAG_SOF) != FLAG_SOF;
+    int isFirstPacket = firstPacket != 0;
+
+#ifdef LC_DEBUG_DEPACKETIZER
+    Limelog("processRtpPayload() for frame %d flagst=0x%x firstPacket=%d firstPacketEx=%d fecCurrentBlockNumber=%u fecLastBlockNumber=%u"
+        , videoPacket->frameIndex, flags, isFirstPacket, isFirstPacketEx
+        , fecCurrentBlockNumber, fecLastBlockNumber);
+    if (isFirstPacketEx != isFirstPacket) {
+        Limelog("processRtpPayload() firstPacket is false but FLAG_SOF is set!!!!!\n");
+    }
+#endif
 
     if ((flags & ~(FLAG_SOF | FLAG_EOF | FLAG_CONTAINS_PIC_DATA)) != 0) {
         Limelog("Paylod is not a SOF, EOF or Data packet\n");
@@ -922,7 +929,8 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
 
             // Wait until next complete frame
 #ifdef LC_DEBUG_DEPACKETIZER
-            Limelog("Wait until next complete frame. waitingForNextSuccessfulFrame set to true\n");
+            Limelog("Wait until next complete frame. waitingForNextSuccessfulFrame set to true. waitingForIdrFrame=%d\n"
+                    , waitingForIdrFrame);
 #endif
             waitingForNextSuccessfulFrame = true;
             dropFrameState();
