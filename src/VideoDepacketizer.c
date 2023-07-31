@@ -210,6 +210,10 @@ static bool getAnnexBStartSequence(PBUFFER_DESC current, PBUFFER_DESC startSeq) 
 }
 
 void validateDecodeUnitForPlayback(PDECODE_UNIT decodeUnit) {
+#ifdef LC_DEBUG_DEPACKETIZER
+    Limelog("validateDecodeUnitForPlayback()\n");
+#endif
+
     // Frames must always have at least one buffer
     if (decodeUnit->bufferList == NULL || decodeUnit->fullLength == 0) {
         Limelog("Frames must always have at least one buffer.\n");
@@ -219,6 +223,9 @@ void validateDecodeUnitForPlayback(PDECODE_UNIT decodeUnit) {
 
     // Validate the buffers in the frame
     if (decodeUnit->frameType == FRAME_TYPE_IDR) {
+#ifdef LC_DEBUG_DEPACKETIZER
+    Limelog("decodeUnit->frameType == FRAME_TYPE_IDR\n");
+#endif
         // IDR frames always start with codec configuration data
         if (NegotiatedVideoFormat & VIDEO_FORMAT_MASK_H264) {
             // H.264 IDR frames should have an SPS, PPS, then picture data
@@ -248,6 +255,11 @@ void validateDecodeUnitForPlayback(PDECODE_UNIT decodeUnit) {
     else {
         if (decodeUnit->frameType != FRAME_TYPE_PFRAME) {
             Limelog("Frame type should be P frame or IDR\n");
+        }
+        else {
+#ifdef LC_DEBUG_DEPACKETIZER
+            Limelog("decodeUnit->frameType == FRAME_TYPE_PFRAME\n");
+#endif
         }
         LC_ASSERT(decodeUnit->frameType == FRAME_TYPE_PFRAME);
 
@@ -319,7 +331,7 @@ void LiCompleteVideoFrame(VIDEO_FRAME_HANDLE handle, int drStatus) {
     PLENTRY_INTERNAL lastEntry;
 
 #ifdef LC_DEBUG_DEPACKETIZER
-    Limelog("LiCompleteVideoFrame()\n");
+    Limelog("LiCompleteVideoFrame() status=%d\n", drStatus);
 #endif
 
     if (drStatus == DR_NEED_IDR) {
@@ -859,15 +871,15 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
     frameIndex = videoPacket->frameIndex;
     flags = videoPacket->flags;
     firstPacket = isFirstPacket(flags, fecCurrentBlockNumber);
-    int isFirstPacketEx = (flags & FLAG_SOF) == FLAG_SOF;
+    int isFirstPacketEx = ((flags & FLAG_SOF) == FLAG_SOF) && (fecCurrentBlockNumber == 0);
     int isFirstPacket = firstPacket != 0;
 
 #ifdef LC_DEBUG_DEPACKETIZER
-    Limelog("processRtpPayload() for frame %d flagst=0x%x firstPacket=%d firstPacketEx=%d fecCurrentBlockNumber=%u fecLastBlockNumber=%u"
-        , videoPacket->frameIndex, flags, isFirstPacket, isFirstPacketEx
+    Limelog("processRtpPayload() for frame %d flags=0x%x firstPacket=%d firstPacketEx=%d fecCurrentBlockNumber=%u fecLastBlockNumber=%u"
+        , videoPacket->frameIndex, flags, firstPacket, isFirstPacketEx
         , fecCurrentBlockNumber, fecLastBlockNumber);
-    if (isFirstPacketEx != isFirstPacket) {
-        Limelog("processRtpPayload() firstPacket is false but FLAG_SOF is set!!!!!\n");
+    if ((!isFirstPacketEx && firstPacket) || (isFirstPacketEx && !firstPacket)) {
+        Limelog("processRtpPayload() firstPacket and isFirstPacketEx differ!!!!!\n");
     }
 #endif
 
