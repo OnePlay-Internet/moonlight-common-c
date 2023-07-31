@@ -859,7 +859,7 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
     frameIndex = videoPacket->frameIndex;
     flags = videoPacket->flags;
     firstPacket = isFirstPacket(flags, fecCurrentBlockNumber);
-    int isFirstPacketEx = (flags & FLAG_SOF) != FLAG_SOF;
+    int isFirstPacketEx = (flags & FLAG_SOF) == FLAG_SOF;
     int isFirstPacket = firstPacket != 0;
 
 #ifdef LC_DEBUG_DEPACKETIZER
