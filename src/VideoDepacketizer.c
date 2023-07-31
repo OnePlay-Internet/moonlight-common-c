@@ -566,6 +566,9 @@ static void reassembleFrame(int frameNumber) {
             nalChainDataLength = 0;
 
             if ((VideoCallbacks.capabilities & CAPABILITY_DIRECT_SUBMIT) == 0) {
+#ifdef LC_DEBUG_DEPACKETIZER
+                Limelog("CAPABILITY_DIRECT_SUBMIT is set\n");
+#endif                
                 if (LbqOfferQueueItem(&decodeUnitQueue, qdu, &qdu->entry) == LBQ_BOUND_EXCEEDED) {
                     Limelog("Video decode unit queue overflow\n");
 
@@ -878,9 +881,6 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
     Limelog("processRtpPayload() for frame %d flags=0x%x firstPacket=%d firstPacketEx=%d fecCurrentBlockNumber=%u fecLastBlockNumber=%u"
         , videoPacket->frameIndex, flags, firstPacket, isFirstPacketEx
         , fecCurrentBlockNumber, fecLastBlockNumber);
-    if ((!isFirstPacketEx && firstPacket) || (isFirstPacketEx && !firstPacket)) {
-        Limelog("processRtpPayload() firstPacket and isFirstPacketEx differ!!!!!\n");
-    }
 #endif
 
     if ((flags & ~(FLAG_SOF | FLAG_EOF | FLAG_CONTAINS_PIC_DATA)) != 0) {
@@ -1112,6 +1112,29 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
             skipToNextNal(&currentPos);
         }
     }
+
+#ifdef LC_DEBUG_DEPACKETIZER
+    if (firstPacket) {
+        BUFFER_DESC startSeq;
+        bool isAnnexB = getAnnexBStartSequence(buffer, &startSeq);
+        bool isIdr = isIdrFrameStart(&currentPos);
+        bool isPPS = isPicturePrameterSetNal(&currentPos);
+        bool isSei = isSeiNal(&currentPos);
+        bool isAUD = isAccessUnitDelimiter(&currentPos);
+        bool isSRF = isSeqReferenceFrameStart(&currentPos);
+        int NALtype = -1;
+        if (NegotiatedVideoFormat & VIDEO_FORMAT_MASK_H264) {
+            NALtype = H264_NAL_TYPE(startSeq.data[startSeq.offset + startSeq.length]);
+        }
+        else if (NegotiatedVideoFormat & VIDEO_FORMAT_MASK_H265) {
+            NALtype = HEVC_NAL_TYPE(startSeq.data[startSeq.offset + startSeq.length]);
+        }
+ 
+        Limelog("firstPacket is set. Nal type=%d\n", NALtype);
+        Limelog("is Annex-B=%d, isIDR=%d, isPPS=%d, isSei=%d, isAUD=%d, isSRF=%d\n"
+            , isAnnexB, isIdr, isPPS, isSei, isAUD, isSRF);
+    }
+#endif
 
     if (firstPacket && isIdrFrameStart(&currentPos))
     {
