@@ -774,7 +774,7 @@ static void processRtpPayloadSlow(PBUFFER_DESC currentPos, PLENTRY_INTERNAL* exi
             containsPicData = true;
         } else if (waitingForIdrFrame || waitingForRefInvalFrame) {
 #ifdef LC_DEBUG_DEPACKETIZER
-            Limelog("Waiting for an IDR frame but frame is not a start frame. Still waiting for IDR frame.\n");
+            Limelog("Waiting for an IDR frame but NAL is not an IDR Frame. Still waiting for IDR frame.\n");
 #endif
         }
 
@@ -976,8 +976,35 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
 
     // If this is the first packet, skip the frame header (if one exists)
     if (firstPacket) {
+#ifdef LC_DEBUG_DEPACKETIZER
+        Limelog("this is the first packet, skip the frame header (if one exists)\n");
+#endif
         // Parse the frame type from the header
         if (APP_VERSION_AT_LEAST(7, 1, 350)) {
+#ifdef LC_DEBUG_DEPACKETIZER
+            auto frameT = currentPos.data[currentPos.offset + 3];
+            switch (frameT) {
+            case 1: // Normal P-frame
+                Limelog("[1] Normal P-frame\n");
+                break;
+            case 2: // IDR frame
+                Limelog("[2] IDR frame\n");
+                break;
+            case 4: // Intra-refresh
+                Limelog("[4] Intra-refresh\n");
+                break;
+            case 5: // P-frame with reference frames invalidated
+                Limelog("[5] P-frame with reference frames invalidated\n");
+                break;
+            case 104: // Sunshine hardcoded header
+                Limelog("[104] Sunshine hardcoded header\n");
+                break;
+            default:
+                Limelog("Unrecognized frame type: %d\n", frameT);
+                break;
+            }
+#endif
+
             switch (currentPos.data[currentPos.offset + 3]) {
             case 1: // Normal P-frame
                 break;
