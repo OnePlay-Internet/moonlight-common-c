@@ -97,7 +97,7 @@ void connectionSendFrameFecStatus(PSS_FRAME_FEC_STATUS fecStatus);
 int sendInputPacketOnControlStream(unsigned char* data, int length);
 bool isControlDataInTransit(void);
 
-int performRtspHandshake(PSERVER_INFORMATION serverInfo);
+int performRtspHandshake(PSERVER_INFORMATION serverInfo, PORT_DETAILS ports);
 
 void initializeVideoDepacketizer(int pktSize);
 void destroyVideoDepacketizer(void);

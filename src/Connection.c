@@ -201,9 +201,16 @@ static bool parseRtspPortNumberFromUrl(const char* rtspSessionUrl, uint16_t* por
 }
 
 // Starts the connection to the streaming machine
+#ifdef DYNAMIC_PORTS
 int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION streamConfig, PCONNECTION_LISTENER_CALLBACKS clCallbacks,
-    PDECODER_RENDERER_CALLBACKS drCallbacks, PAUDIO_RENDERER_CALLBACKS arCallbacks, void* renderContext, int drFlags,
-    void* audioContext, int arFlags) {
+                      PDECODER_RENDERER_CALLBACKS drCallbacks, PAUDIO_RENDERER_CALLBACKS arCallbacks, void* renderContext, int drFlags,
+                      void* audioContext, int arFlags, PORT_DETAILS ports)
+#else
+int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION streamConfig, PCONNECTION_LISTENER_CALLBACKS clCallbacks,
+                      PDECODER_RENDERER_CALLBACKS drCallbacks, PAUDIO_RENDERER_CALLBACKS arCallbacks, void* renderContext, int drFlags,
+                      void* audioContext, int arFlags)
+#endif
+{
     int err;
 
     if (drCallbacks != NULL && (drCallbacks->capabilities & CAPABILITY_PULL_RENDERER) && drCallbacks->submitDecodeUnit) {
@@ -249,7 +256,11 @@ int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION stre
     // Parse RTSP port number from RTSP session URL
     if (!parseRtspPortNumberFromUrl(serverInfo->rtspSessionUrl, &RtspPortNumber)) {
         // Use the well known port if parsing fails
+#ifdef DYNAMIC_PORTS
+        RtspPortNumber = ports.rtsp_port;
+#else
         RtspPortNumber = 48010;
+#endif
 
         Limelog("RTSP port: %u (RTSP URL parsing failed)\n", RtspPortNumber);
     }
@@ -408,7 +419,7 @@ int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION stre
 
     Limelog("Starting RTSP handshake...");
     ListenerCallbacks.stageStarting(STAGE_RTSP_HANDSHAKE);
-    err = performRtspHandshake(serverInfo);
+    err = performRtspHandshake(serverInfo, ports);
     if (err != 0) {
         Limelog("failed: %d\n", err);
         ListenerCallbacks.stageFailed(STAGE_RTSP_HANDSHAKE, err);

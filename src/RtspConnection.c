@@ -708,7 +708,7 @@ static bool parseUrlAddrFromRtspUrlString(const char* rtspUrlString, char* desti
 }
 
 // Perform RTSP Handshake with the streaming server machine as part of the connection process
-int performRtspHandshake(PSERVER_INFORMATION serverInfo) {
+int performRtspHandshake(PSERVER_INFORMATION serverInfo, PORT_DETAILS ports) {
     int ret;
 
     LC_ASSERT(RtspPortNumber != 0);
@@ -915,7 +915,7 @@ int performRtspHandshake(PSERVER_INFORMATION serverInfo) {
         LC_ASSERT(AudioPortNumber == 0);
         if (!parseServerPortFromTransport(&response, &AudioPortNumber)) {
             // Use the well known port if parsing fails
-            AudioPortNumber = 48000;
+            AudioPortNumber = ports.audio_port;
 
             Limelog("Audio port: %u (RTSP parsing failed)\n", AudioPortNumber);
         }
@@ -991,7 +991,7 @@ int performRtspHandshake(PSERVER_INFORMATION serverInfo) {
         LC_ASSERT(VideoPortNumber == 0);
         if (!parseServerPortFromTransport(&response, &VideoPortNumber)) {
             // Use the well known port if parsing fails
-            VideoPortNumber = 47998;
+            VideoPortNumber = ports.video_port;
 
             Limelog("Video port: %u (RTSP parsing failed)\n", VideoPortNumber);
         }
@@ -1025,7 +1025,7 @@ int performRtspHandshake(PSERVER_INFORMATION serverInfo) {
         LC_ASSERT(ControlPortNumber == 0);
         if (!parseServerPortFromTransport(&response, &ControlPortNumber)) {
             // Use the well known port if parsing fails
-            ControlPortNumber = 47999;
+            ControlPortNumber = ports.control_port;
 
             Limelog("Control port: %u (RTSP parsing failed)\n", ControlPortNumber);
         }

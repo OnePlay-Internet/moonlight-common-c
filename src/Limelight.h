@@ -7,6 +7,10 @@
 #include <stdint.h>
 #include <stdbool.h>
 
+#ifdef DYNAMIC_PORTS
+#include "../../../app/onePlayAPI/OnePlayPort.h"
+#endif
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -488,9 +492,15 @@ void LiInitializeServerInformation(PSERVER_INFORMATION serverInfo);
 //
 // This function is not thread-safe.
 //
+#ifdef DYNAMIC_PORTS
 int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION streamConfig, PCONNECTION_LISTENER_CALLBACKS clCallbacks,
-    PDECODER_RENDERER_CALLBACKS drCallbacks, PAUDIO_RENDERER_CALLBACKS arCallbacks, void* renderContext, int drFlags,
-    void* audioContext, int arFlags);
+                      PDECODER_RENDERER_CALLBACKS drCallbacks, PAUDIO_RENDERER_CALLBACKS arCallbacks, void* renderContext, int drFlags,
+                      void* audioContext, int arFlags, PORT_DETAILS ports);
+#else
+int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION streamConfig, PCONNECTION_LISTENER_CALLBACKS clCallbacks,
+                      PDECODER_RENDERER_CALLBACKS drCallbacks, PAUDIO_RENDERER_CALLBACKS arCallbacks, void* renderContext, int drFlags,
+                      void* audioContext, int arFlags);
+#endif
 
 // This function stops streaming. This function is not thread-safe.
 void LiStopConnection(void);
