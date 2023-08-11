@@ -15,6 +15,13 @@ static PLT_THREAD inputSendThread;
 static float absCurrentPosX;
 static float absCurrentPosY;
 
+// Limited by number of bits in activeGamepadMask
+#define MAX_GAMEPADS 16
+
+static uint8_t currentPenButtonState;
+static uint16_t currentActiveGamepadMask;
+static int currentControllerButtonState[MAX_GAMEPADS];
+
 #define CLAMP(val, min, max) (((val) < (min)) ? (min) : (((val) > (max)) ? (max) : (val)))
 
 #define MAX_INPUT_PACKET_SIZE 128
@@ -34,10 +41,17 @@ static float absCurrentPosY;
 // effective input latency by avoiding packet queuing in ENet.
 #define CONTROLLER_BATCHING_INTERVAL_MS 1
 #define MOUSE_BATCHING_INTERVAL_MS 1
+#define PEN_BATCHING_INTERVAL_MS 1
+#define MOTION_BATCHING_INTERVAL_MS 1
+
+// Don't batch up/down/cancel events
+#define TOUCH_EVENT_IS_BATCHABLE(x) ((x) == LI_TOUCH_EVENT_HOVER || (x) == LI_TOUCH_EVENT_MOVE)
 
 // Contains input stream packets
 typedef struct _PACKET_HOLDER {
     LINKED_BLOCKING_QUEUE_ENTRY entry;
+    uint32_t enetPacketFlags;
+    uint8_t channelId;
 
     // The union must be the last member since we abuse the NV_UNICODE_PACKET
     // text field to store variable length data which gets split before being
@@ -53,6 +67,12 @@ typedef struct _PACKET_HOLDER {
         NV_SCROLL_PACKET scroll;
         SS_HSCROLL_PACKET hscroll;
         NV_HAPTICS_PACKET haptics;
+        SS_TOUCH_PACKET touch;
+        SS_PEN_PACKET pen;
+        SS_CONTROLLER_ARRIVAL_PACKET controllerArrival;
+        SS_CONTROLLER_TOUCH_PACKET controllerTouch;
+        SS_CONTROLLER_MOTION_PACKET controllerMotion;
+        SS_CONTROLLER_BATTERY_PACKET controllerBattery;
         NV_UNICODE_PACKET unicode;
     } packet;
 } PACKET_HOLDER, *PPACKET_HOLDER;
@@ -77,6 +97,10 @@ int initializeInputStream(void) {
     // Sunshine also uses SendInput() so it's not affected either.
     needsBatchedScroll = APP_VERSION_AT_LEAST(7, 1, 409) && !IS_SUNSHINE();
     batchedScrollDelta = 0;
+
+    currentPenButtonState = 0;
+    currentActiveGamepadMask = 0;
+    memset(currentControllerButtonState, 0, sizeof(currentControllerButtonState));
 
     // Start with the virtual mouse centered
     absCurrentPosX = absCurrentPosY = 0.5f;
@@ -194,7 +218,10 @@ static bool sendInputPacket(PPACKET_HOLDER holder) {
     // has been removed. We send the plaintext packet through and the control stream code will do
     // the encryption.
     if (encryptedControlStream) {
-        err = (SOCK_RET)sendInputPacketOnControlStream((unsigned char*)&holder->packet, PACKET_SIZE(holder));
+        err = (SOCK_RET)sendInputPacketOnControlStream((unsigned char*)&holder->packet,
+                                                        PACKET_SIZE(holder),
+                                                        holder->channelId,
+                                                        holder->enetPacketFlags);
         if (err < 0) {
             Limelog("Input: sendInputPacketOnControlStream() failed: %d\n", (int) err);
             ListenerCallbacks.connectionTerminated(err);
@@ -242,7 +269,9 @@ static bool sendInputPacket(PPACKET_HOLDER holder) {
             }
 
             err = (SOCK_RET)sendInputPacketOnControlStream((unsigned char*) encryptedBuffer,
-                (int) (encryptedSize + sizeof(encryptedLengthPrefix)));
+                                                            (int)(encryptedSize + sizeof(encryptedLengthPrefix)),
+                                                            holder->channelId,
+                                                            holder->enetPacketFlags);
             if (err < 0) {
                 Limelog("Input: sendInputPacketOnControlStream() failed: %d\n", (int) err);
                 ListenerCallbacks.connectionTerminated(err);
@@ -272,6 +301,8 @@ static void inputSendThreadProc(void* context) {
 
     uint64_t lastControllerPacketTime = 0;
     uint64_t lastMousePacketTime = 0;
+    uint64_t lastPenPacketTime = 0;
+    uint64_t lastMotionPacketTime = 0;
 
     while (!PltIsThreadInterrupted(&inputSendThread)) {
         err = LbqWaitForQueueElement(&packetQueue, (void**)&holder);
@@ -312,6 +343,7 @@ static void inputSendThreadProc(void* context) {
                 // calls to LiSendMultiControllerEvent() with different values for analog sticks (max -> zero).
                 newPkt = &controllerBatchHolder->packet.multiController;
                 if (newPkt->buttonFlags != origPkt->buttonFlags ||
+                    newPkt->buttonFlags2 != origPkt->buttonFlags2 ||
                     newPkt->controllerNumber != origPkt->controllerNumber ||
                     newPkt->activeGamepadMask != origPkt->activeGamepadMask) {
                     // Batching not allowed
@@ -429,6 +461,88 @@ static void inputSendThreadProc(void* context) {
 
             lastMousePacketTime = now;
         }
+        // If it's a pen packet, we should only send the latest move or hover events
+        else if (holder->packet.header.magic == LE32(SS_PEN_MAGIC) && TOUCH_EVENT_IS_BATCHABLE(holder->packet.pen.eventType)) {
+            uint64_t now = PltGetMillis();
+
+            // Delay for batching if required
+            if (now < lastPenPacketTime + PEN_BATCHING_INTERVAL_MS) {
+                PltSleepMs((int)(lastPenPacketTime + PEN_BATCHING_INTERVAL_MS - now));
+                now = PltGetMillis();
+            }
+
+            for (;;) {
+                PPACKET_HOLDER penBatchHolder;
+
+                // Peek at the next packet
+                if (LbqPeekQueueElement(&packetQueue, (void**)&penBatchHolder) != LBQ_SUCCESS) {
+                    break;
+                }
+
+                // If it's not a pen packet, we're done
+                if (penBatchHolder->packet.header.magic != LE32(SS_PEN_MAGIC)) {
+                    break;
+                }
+
+                // If the buttons or event type is different, we cannot batch
+                if (holder->packet.pen.penButtons != penBatchHolder->packet.pen.penButtons ||
+                    holder->packet.pen.eventType != penBatchHolder->packet.pen.eventType) {
+                    break;
+                }
+
+                // Remove the next packet
+                if (LbqPollQueueElement(&packetQueue, (void**)&penBatchHolder) != LBQ_SUCCESS) {
+                    break;
+                }
+
+                // Replace the current packet with the new one
+                freePacketHolder(holder);
+                holder = penBatchHolder;
+            }
+
+            lastPenPacketTime = now;
+        }
+        // If it's a motion packet, only send the latest for each sensor type
+        else if (holder->packet.header.magic == LE32(SS_CONTROLLER_MOTION_MAGIC)) {
+            uint64_t now = PltGetMillis();
+
+            // Delay for batching if required
+            if (now < lastMotionPacketTime + MOTION_BATCHING_INTERVAL_MS) {
+                PltSleepMs((int)(lastMotionPacketTime + MOTION_BATCHING_INTERVAL_MS - now));
+                now = PltGetMillis();
+            }
+
+            for (;;) {
+                PPACKET_HOLDER motionBatchHolder;
+
+                // Peek at the next packet
+                if (LbqPeekQueueElement(&packetQueue, (void**)&motionBatchHolder) != LBQ_SUCCESS) {
+                    break;
+                }
+
+                // If it's not a motion packet, we're done
+                if (motionBatchHolder->packet.header.magic != LE32(SS_CONTROLLER_MOTION_MAGIC)) {
+                    break;
+                }
+
+                // If the controller or sensor type is different, we cannot batch
+                if (holder->packet.controllerMotion.motionType != motionBatchHolder->packet.controllerMotion.motionType ||
+                    holder->packet.controllerMotion.controllerNumber != motionBatchHolder->packet.controllerMotion.controllerNumber) {
+                    break;
+                }
+
+                // Remove the next packet
+                if (LbqPollQueueElement(&packetQueue, (void**)&motionBatchHolder) != LBQ_SUCCESS) {
+                    break;
+                }
+
+                // Replace the current packet with the new one
+                freePacketHolder(holder);
+                holder = motionBatchHolder;
+            }
+
+            lastMotionPacketTime = now;
+        }
         // If it's a UTF-8 text packet, we may need to split it into a several packets to send
         else if (holder->packet.header.magic == LE32(UTF8_TEXT_EVENT_MAGIC)) {
             PACKET_HOLDER splitPacket;
@@ -515,6 +629,8 @@ static int sendEnableHaptics(void) {
         return -1;
     }
 
+    holder->channelId = CTRL_CHANNEL_GENERIC;
+    holder->enetPacketFlags = ENET_PACKET_FLAG_RELIABLE;
     holder->packet.haptics.header.size = BE32(sizeof(NV_HAPTICS_PACKET) - sizeof(uint32_t));
     holder->packet.haptics.header.magic = LE32(ENABLE_HAPTICS_MAGIC);
     holder->packet.haptics.enable = LE16(1);
@@ -586,6 +702,19 @@ int stopInputStream(void) {
     return 0;
 }
 
+void floatToNetfloat(float in, netfloat out) {
+    if (IS_LITTLE_ENDIAN()) {
+        memcpy(out, &in, sizeof(in));
+    }
+    else {
+        uint8_t* inb = (uint8_t*)&in;
+        out[0] = inb[3];
+        out[1] = inb[2];
+        out[2] = inb[1];
+        out[3] = inb[0];
+    }
+}
+
 // Send a mouse move event to the streaming machine
 int LiSendMouseMoveEvent(short deltaX, short deltaY) {
     PPACKET_HOLDER holder;
@@ -603,6 +732,9 @@ int LiSendMouseMoveEvent(short deltaX, short deltaY) {
     if (holder == NULL) {
         return -1;
     }
+
+    holder->channelId = CTRL_CHANNEL_MOUSE;
+    holder->enetPacketFlags = ENET_PACKET_FLAG_RELIABLE;
 
     holder->packet.mouseMoveRel.header.size = BE32(sizeof(NV_REL_MOUSE_MOVE_PACKET) - sizeof(uint32_t));
     if (AppVersionQuad[0] >= 5) {
@@ -637,6 +769,11 @@ int LiSendMousePositionEvent(short x, short y, short referenceWidth, short refer
     if (holder == NULL) {
         return -1;
     }
+
+    holder->channelId = CTRL_CHANNEL_MOUSE;
+
+    // The latest packet always contains the latest data, so discard older packets upon reordering
+    holder->enetPacketFlags = 0;
 
     holder->packet.mouseMoveAbs.header.size = BE32(sizeof(NV_ABS_MOUSE_MOVE_PACKET) - sizeof(uint32_t));
     holder->packet.mouseMoveAbs.header.magic = LE32(MOUSE_MOVE_ABS_MAGIC);
@@ -694,6 +831,8 @@ int LiSendMouseButtonEvent(char action, int button) {
         return -1;
     }
 
+    holder->channelId = CTRL_CHANNEL_MOUSE;
+    holder->enetPacketFlags = ENET_PACKET_FLAG_RELIABLE;
     holder->packet.mouseButton.header.size = BE32(sizeof(NV_MOUSE_BUTTON_PACKET) - sizeof(uint32_t));
     holder->packet.mouseButton.header.magic = (uint8_t)action;
     if (AppVersionQuad[0] >= 5) {
@@ -725,6 +864,9 @@ int LiSendKeyboardEvent2(short keyCode, char keyAction, char modifiers, char fla
     if (holder == NULL) {
         return -1;
     }
+
+    holder->channelId = CTRL_CHANNEL_KEYBOARD;
+    holder->enetPacketFlags = ENET_PACKET_FLAG_RELIABLE;
 
     // For proper behavior, the MODIFIER flag must not be set on the modifier key down event itself
     // for the extended modifiers on the right side of the keyboard. If the MODIFIER flag is set,
@@ -803,6 +945,10 @@ int LiSendUtf8TextEvent(const char *text, unsigned int length) {
     if (holder == NULL) {
         return -1;
     }
+
+    holder->channelId = CTRL_CHANNEL_UTF8;
+    holder->enetPacketFlags = ENET_PACKET_FLAG_RELIABLE;
+
     // Magic + string length
     holder->packet.unicode.header.size = BE32(sizeof(uint32_t) + length);
     holder->packet.unicode.header.magic = LE32(UTF8_TEXT_EVENT_MAGIC);
@@ -819,7 +965,7 @@ int LiSendUtf8TextEvent(const char *text, unsigned int length) {
 }
 
 static int sendControllerEventInternal(short controllerNumber, short activeGamepadMask,
-    short buttonFlags, unsigned char leftTrigger, unsigned char rightTrigger,
+    int buttonFlags, unsigned char leftTrigger, unsigned char rightTrigger,
     short leftStickX, short leftStickY, short rightStickX, short rightStickY)
 {
     PPACKET_HOLDER holder;
@@ -829,10 +975,30 @@ static int sendControllerEventInternal(short controllerNumber, short activeGamep
         return -2;
     }
 
+    // GFE only supports a maximum of 4 controllers
+    if (!IS_SUNSHINE()) {
+        controllerNumber %= 4;
+        activeGamepadMask &= 0xF;
+    }
+    else {
+        // Sunshine supports up to 16 (max number of bits in activeGamepadMask)
+        controllerNumber %= MAX_GAMEPADS;
+    }
+
     holder = allocatePacketHolder(0);
     if (holder == NULL) {
         return -1;
     }
+
+    // Send each controller on a separate channel
+    holder->channelId = CTRL_CHANNEL_GAMEPAD_BASE + controllerNumber;
+
+    // If the active gamepad mask or button state changes, send a reliable event to ensure delivery.
+    // For axis-only updates, we use sequenced unreliable packets to only process the latest updates.
+    holder->enetPacketFlags = (activeGamepadMask != currentActiveGamepadMask || buttonFlags != currentControllerButtonState[controllerNumber]) ?
+                                  ENET_PACKET_FLAG_RELIABLE : 0;
+    currentActiveGamepadMask = activeGamepadMask;
+    currentControllerButtonState[controllerNumber] = buttonFlags;
 
     if (AppVersionQuad[0] == 3) {
         // Generation 3 servers don't support multiple controllers so we send
@@ -853,6 +1019,7 @@ static int sendControllerEventInternal(short controllerNumber, short activeGamep
     else {
         // Generation 4+ servers support passing the controller number
         holder->packet.multiController.header.size = BE32(sizeof(NV_MULTI_CONTROLLER_PACKET) - sizeof(uint32_t));
+
         // On Gen 5 servers, the header code is decremented by one
         if (AppVersionQuad[0] >= 5) {
             holder->packet.multiController.header.magic = LE32(MULTI_CONTROLLER_MAGIC_GEN5);
@@ -860,18 +1027,20 @@ static int sendControllerEventInternal(short controllerNumber, short activeGamep
         else {
             holder->packet.multiController.header.magic = LE32(MULTI_CONTROLLER_MAGIC);
         }
+
         holder->packet.multiController.headerB = LE16(MC_HEADER_B);
         holder->packet.multiController.controllerNumber = LE16(controllerNumber);
         holder->packet.multiController.activeGamepadMask = LE16(activeGamepadMask);
         holder->packet.multiController.midB = LE16(MC_MID_B);
-        holder->packet.multiController.buttonFlags = LE16(buttonFlags);
+        holder->packet.multiController.buttonFlags = LE16((short)buttonFlags);
         holder->packet.multiController.leftTrigger = leftTrigger;
         holder->packet.multiController.rightTrigger = rightTrigger;
         holder->packet.multiController.leftStickX = LE16(leftStickX);
         holder->packet.multiController.leftStickY = LE16(leftStickY);
         holder->packet.multiController.rightStickX = LE16(rightStickX);
         holder->packet.multiController.rightStickY = LE16(rightStickY);
-        holder->packet.multiController.tailA = LE32(MC_TAIL_A);
+        holder->packet.multiController.tailA = LE16(MC_TAIL_A);
+        holder->packet.multiController.buttonFlags2 = IS_SUNSHINE() ? LE16((short)(buttonFlags >> 16)) : 0;
         holder->packet.multiController.tailB = LE16(MC_TAIL_B);
     }
 
@@ -895,7 +1064,7 @@ int LiSendControllerEvent(short buttonFlags, unsigned char leftTrigger, unsigned
 
 // Send a controller event to the streaming machine
 int LiSendMultiControllerEvent(short controllerNumber, short activeGamepadMask,
-    short buttonFlags, unsigned char leftTrigger, unsigned char rightTrigger,
+    int buttonFlags, unsigned char leftTrigger, unsigned char rightTrigger,
     short leftStickX, short leftStickY, short rightStickX, short rightStickY)
 {
     return sendControllerEventInternal(controllerNumber, activeGamepadMask,
@@ -940,6 +1109,9 @@ int LiSendHighResScrollEvent(short scrollAmount) {
                 return -1;
             }
 
+            holder->channelId = CTRL_CHANNEL_MOUSE;
+            holder->enetPacketFlags = ENET_PACKET_FLAG_RELIABLE;
+
             holder->packet.scroll.header.size = BE32(sizeof(NV_SCROLL_PACKET) - sizeof(uint32_t));
             if (AppVersionQuad[0] >= 5) {
                 holder->packet.scroll.header.magic = LE32(SCROLL_MAGIC_GEN5);
@@ -969,6 +1141,9 @@ int LiSendHighResScrollEvent(short scrollAmount) {
         if (holder == NULL) {
             return -1;
         }
+
+        holder->channelId = CTRL_CHANNEL_MOUSE;
+        holder->enetPacketFlags = ENET_PACKET_FLAG_RELIABLE;
 
         holder->packet.scroll.header.size = BE32(sizeof(NV_SCROLL_PACKET) - sizeof(uint32_t));
         if (AppVersionQuad[0] >= 5) {
@@ -1008,7 +1183,7 @@ int LiSendHighResHScrollEvent(short scrollAmount) {
 
     // This is a protocol extension only supported with Sunshine
     if (!IS_SUNSHINE()) {
-        return -3;
+        return LI_ERR_UNSUPPORTED;
     }
 
     if (scrollAmount == 0) {
@@ -1019,6 +1194,9 @@ int LiSendHighResHScrollEvent(short scrollAmount) {
     if (holder == NULL) {
         return -1;
     }
+
+    holder->channelId = CTRL_CHANNEL_MOUSE;
+    holder->enetPacketFlags = ENET_PACKET_FLAG_RELIABLE;
 
     holder->packet.hscroll.header.size = BE32(sizeof(SS_HSCROLL_PACKET) - sizeof(uint32_t));
     holder->packet.hscroll.header.magic = LE32(SS_HSCROLL_MAGIC);
@@ -1036,4 +1214,291 @@ int LiSendHighResHScrollEvent(short scrollAmount) {
 
 int LiSendHScrollEvent(signed char scrollClicks) {
     return LiSendHighResHScrollEvent(scrollClicks * LI_WHEEL_DELTA);
+}
+
+int LiSendTouchEvent(uint8_t eventType, uint32_t pointerId, float x, float y, float pressureOrDistance,
+                     float contactAreaMajor, float contactAreaMinor, uint16_t rotation) {
+    PPACKET_HOLDER holder;
+    int err;
+
+    if (!initialized) {
+        return -2;
+    }
+
+    // This is a protocol extension only supported with Sunshine
+    if (!(SunshineFeatureFlags & SS_FF_PEN_TOUCH_EVENTS)) {
+        return LI_ERR_UNSUPPORTED;
+    }
+
+    holder = allocatePacketHolder(0);
+    if (holder == NULL) {
+        return -1;
+    }
+
+    holder->channelId = CTRL_CHANNEL_TOUCH;
+
+    // Allow move and hover events to be dropped if a newer one arrives, but don't allow
+    // state changing events like up/down/leave events to be dropped.
+    holder->enetPacketFlags = TOUCH_EVENT_IS_BATCHABLE(eventType) ? 0 : ENET_PACKET_FLAG_RELIABLE;
+
+    holder->packet.touch.header.size = BE32(sizeof(SS_TOUCH_PACKET) - sizeof(uint32_t));
+    holder->packet.touch.header.magic = LE32(SS_TOUCH_MAGIC);
+    holder->packet.touch.eventType = eventType;
+    holder->packet.touch.pointerId = LE32(pointerId);
+    holder->packet.touch.rotation = LE16(rotation);
+    memset(holder->packet.touch.zero, 0, sizeof(holder->packet.touch.zero));
+    floatToNetfloat(x, holder->packet.touch.x);
+    floatToNetfloat(y, holder->packet.touch.y);
+    floatToNetfloat(pressureOrDistance, holder->packet.touch.pressureOrDistance);
+    floatToNetfloat(contactAreaMajor, holder->packet.touch.contactAreaMajor);
+    floatToNetfloat(contactAreaMinor, holder->packet.touch.contactAreaMinor);
+
+    err = LbqOfferQueueItem(&packetQueue, holder, &holder->entry);
+    if (err != LBQ_SUCCESS) {
+        LC_ASSERT(err == LBQ_BOUND_EXCEEDED);
+        Limelog("Input queue reached maximum size limit\n");
+        freePacketHolder(holder);
+    }
+
+    return err;
+}
+
+int LiSendPenEvent(uint8_t eventType, uint8_t toolType, uint8_t penButtons,
+                   float x, float y, float pressureOrDistance,
+                   float contactAreaMajor, float contactAreaMinor,
+                   uint16_t rotation, uint8_t tilt) {
+    PPACKET_HOLDER holder;
+    int err;
+
+    if (!initialized) {
+        return -2;
+    }
+
+    // This is a protocol extension only supported with Sunshine
+    if (!(SunshineFeatureFlags & SS_FF_PEN_TOUCH_EVENTS)) {
+        return LI_ERR_UNSUPPORTED;
+    }
+
+    holder = allocatePacketHolder(0);
+    if (holder == NULL) {
+        return -1;
+    }
+
+    holder->channelId = CTRL_CHANNEL_PEN;
+
+    // Allow move and hover events to be dropped if a newer one arrives (if no buttons changed),
+    // but don't allow state changing events like up/down/leave events to be dropped.
+    holder->enetPacketFlags = (TOUCH_EVENT_IS_BATCHABLE(eventType) && !(penButtons ^ currentPenButtonState)) ? 0 : ENET_PACKET_FLAG_RELIABLE;
+    currentPenButtonState = penButtons;
+
+    holder->packet.pen.header.size = BE32(sizeof(SS_PEN_PACKET) - sizeof(uint32_t));
+    holder->packet.pen.header.magic = LE32(SS_PEN_MAGIC);
+    holder->packet.pen.eventType = eventType;
+    holder->packet.pen.toolType = toolType;
+    holder->packet.pen.penButtons = penButtons;
+    memset(holder->packet.pen.zero, 0, sizeof(holder->packet.pen.zero));
+    floatToNetfloat(x, holder->packet.pen.x);
+    floatToNetfloat(y, holder->packet.pen.y);
+    floatToNetfloat(pressureOrDistance, holder->packet.pen.pressureOrDistance);
+    holder->packet.pen.rotation = LE16(rotation);
+    holder->packet.pen.tilt = tilt;
+    memset(holder->packet.pen.zero2, 0, sizeof(holder->packet.pen.zero2));
+    floatToNetfloat(contactAreaMajor, holder->packet.pen.contactAreaMajor);
+    floatToNetfloat(contactAreaMinor, holder->packet.pen.contactAreaMinor);
+
+    err = LbqOfferQueueItem(&packetQueue, holder, &holder->entry);
+    if (err != LBQ_SUCCESS) {
+        LC_ASSERT(err == LBQ_BOUND_EXCEEDED);
+        Limelog("Input queue reached maximum size limit\n");
+        freePacketHolder(holder);
+    }
+
+    return err;
+}
+
+int LiSendControllerArrivalEvent(uint8_t controllerNumber, uint16_t activeGamepadMask, uint8_t type,
+                                 uint32_t supportedButtonFlags, uint16_t capabilities) {
+    PPACKET_HOLDER holder;
+    int err;
+
+    if (!initialized) {
+        return -2;
+    }
+
+    // Sunshine supports up to 16 controllers
+    controllerNumber %= MAX_GAMEPADS;
+
+    // The arrival event is only supported by Sunshine
+    if (IS_SUNSHINE()) {
+        holder = allocatePacketHolder(0);
+        if (holder == NULL) {
+            return -1;
+        }
+
+        // Send each controller on a separate channel
+        holder->channelId = CTRL_CHANNEL_GAMEPAD_BASE + controllerNumber;
+        holder->enetPacketFlags = ENET_PACKET_FLAG_RELIABLE;
+
+        holder->packet.controllerArrival.header.size = BE32(sizeof(SS_CONTROLLER_ARRIVAL_PACKET) - sizeof(uint32_t));
+        holder->packet.controllerArrival.header.magic = LE32(SS_CONTROLLER_ARRIVAL_MAGIC);
+        holder->packet.controllerArrival.controllerNumber = controllerNumber;
+        holder->packet.controllerArrival.type = type;
+        holder->packet.controllerArrival.capabilities = LE16(capabilities);
+        holder->packet.controllerArrival.supportedButtonFlags = LE32(supportedButtonFlags);
+
+        err = LbqOfferQueueItem(&packetQueue, holder, &holder->entry);
+        if (err != LBQ_SUCCESS) {
+            LC_ASSERT(err == LBQ_BOUND_EXCEEDED);
+            Limelog("Input queue reached maximum size limit\n");
+            freePacketHolder(holder);
+            return err;
+        }
+    }
+
+    // Send a MC event just in case the host software doesn't support arrival events.
+    return LiSendMultiControllerEvent(controllerNumber, activeGamepadMask, 0, 0, 0, 0, 0, 0, 0);
+}
+
+int LiSendControllerTouchEvent(uint8_t controllerNumber, uint8_t eventType, uint32_t pointerId, float x, float y, float pressure) {
+    PPACKET_HOLDER holder;
+    int err;
+
+    if (!initialized) {
+        return -2;
+    }
+
+    // This is a protocol extension only supported with Sunshine
+    if (!(SunshineFeatureFlags & SS_FF_CONTROLLER_TOUCH_EVENTS)) {
+        return LI_ERR_UNSUPPORTED;
+    }
+
+    // Sunshine supports up to 16 controllers
+    controllerNumber %= MAX_GAMEPADS;
+
+    holder = allocatePacketHolder(0);
+    if (holder == NULL) {
+        return -1;
+    }
+
+    // Send each controller on a separate channel
+    holder->channelId = CTRL_CHANNEL_GAMEPAD_BASE + controllerNumber;
+
+    // Allow move and hover events to be dropped if a newer one arrives, but don't allow
+    // state changing events like up/down/leave events to be dropped.
+    holder->enetPacketFlags = TOUCH_EVENT_IS_BATCHABLE(eventType) ? 0 : ENET_PACKET_FLAG_RELIABLE;
+
+    holder->packet.controllerTouch.header.size = BE32(sizeof(SS_CONTROLLER_TOUCH_PACKET) - sizeof(uint32_t));
+    holder->packet.controllerTouch.header.magic = LE32(SS_CONTROLLER_TOUCH_MAGIC);
+    holder->packet.controllerTouch.controllerNumber = controllerNumber;
+    holder->packet.controllerTouch.eventType = eventType;
+    memset(holder->packet.controllerTouch.zero, 0, sizeof(holder->packet.controllerTouch.zero));
+    holder->packet.controllerTouch.pointerId = LE32(pointerId);
+    floatToNetfloat(x, holder->packet.controllerTouch.x);
+    floatToNetfloat(y, holder->packet.controllerTouch.y);
+    floatToNetfloat(pressure, holder->packet.controllerTouch.pressure);
+
+    err = LbqOfferQueueItem(&packetQueue, holder, &holder->entry);
+    if (err != LBQ_SUCCESS) {
+        LC_ASSERT(err == LBQ_BOUND_EXCEEDED);
+        Limelog("Input queue reached maximum size limit\n");
+        freePacketHolder(holder);
+    }
+
+    return err;
+}
+
+int LiSendControllerMotionEvent(uint8_t controllerNumber, uint8_t motionType, float x, float y, float z) {
+    PPACKET_HOLDER holder;
+    int err;
+
+    if (!initialized) {
+        return -2;
+    }
+
+    // This is a protocol extension only supported with Sunshine
+    if (!(SunshineFeatureFlags & SS_FF_CONTROLLER_TOUCH_EVENTS)) {
+        return LI_ERR_UNSUPPORTED;
+    }
+
+    // Sunshine supports up to 16 controllers
+    controllerNumber %= MAX_GAMEPADS;
+
+    holder = allocatePacketHolder(0);
+    if (holder == NULL) {
+        return -1;
+    }
+
+    // Send each controller on a separate channel specific to motion sensors
+    holder->channelId = CTRL_CHANNEL_SENSOR_BASE + controllerNumber;
+
+    // Motion events are so rapid that we can just drop any events that are lost in transit,
+    // but we will treat (0, 0, 0) as a special value for gyro events to allow clients to
+    // reliably set the gyro to a null state when sensor events are halted due to focus loss
+    // or similar client-side constraints.
+    if (motionType == LI_MOTION_TYPE_GYRO && x == 0.0f && y == 0.0f && z == 0.0f) {
+        holder->enetPacketFlags = ENET_PACKET_FLAG_RELIABLE;
+    }
+    else {
+        holder->enetPacketFlags = 0;
+    }
+
+    holder->packet.controllerMotion.header.size = BE32(sizeof(SS_CONTROLLER_MOTION_PACKET) - sizeof(uint32_t));
+    holder->packet.controllerMotion.header.magic = LE32(SS_CONTROLLER_MOTION_MAGIC);
+    holder->packet.controllerMotion.controllerNumber = controllerNumber;
+    holder->packet.controllerMotion.motionType = motionType;
+    memset(holder->packet.controllerMotion.zero, 0, sizeof(holder->packet.controllerMotion.zero));
+    floatToNetfloat(x, holder->packet.controllerMotion.x);
+    floatToNetfloat(y, holder->packet.controllerMotion.y);
+    floatToNetfloat(z, holder->packet.controllerMotion.z);
+
+    err = LbqOfferQueueItem(&packetQueue, holder, &holder->entry);
+    if (err != LBQ_SUCCESS) {
+        LC_ASSERT(err == LBQ_BOUND_EXCEEDED);
+        Limelog("Input queue reached maximum size limit\n");
+        freePacketHolder(holder);
+    }
+
+    return err;
+}
+
+int LiSendControllerBatteryEvent(uint8_t controllerNumber, uint8_t batteryState, uint8_t batteryPercentage) {
+    PPACKET_HOLDER holder;
+    int err;
+
+    if (!initialized) {
+        return -2;
+    }
+
+    // This is a protocol extension only supported with Sunshine
+    if (!IS_SUNSHINE()) {
+        return LI_ERR_UNSUPPORTED;
+    }
+
+    // Sunshine supports up to 16 controllers
+    controllerNumber %= MAX_GAMEPADS;
+
+    holder = allocatePacketHolder(0);
+    if (holder == NULL) {
+        return -1;
+    }
+
+    // Send each controller on a separate channel
+    holder->channelId = CTRL_CHANNEL_GAMEPAD_BASE + controllerNumber;
+    holder->enetPacketFlags = ENET_PACKET_FLAG_RELIABLE;
+
+    holder->packet.controllerBattery.header.size = BE32(sizeof(SS_CONTROLLER_BATTERY_PACKET) - sizeof(uint32_t));
+    holder->packet.controllerBattery.header.magic = LE32(SS_CONTROLLER_BATTERY_MAGIC);
+    holder->packet.controllerBattery.controllerNumber = controllerNumber;
+    holder->packet.controllerBattery.batteryState = batteryState;
+    holder->packet.controllerBattery.batteryPercentage = batteryPercentage;
+    memset(holder->packet.controllerBattery.zero, 0, sizeof(holder->packet.controllerBattery.zero));
+
+    err = LbqOfferQueueItem(&packetQueue, holder, &holder->entry);
+    if (err != LBQ_SUCCESS) {
+        LC_ASSERT(err == LBQ_BOUND_EXCEEDED);
+        Limelog("Input queue reached maximum size limit\n");
+        freePacketHolder(holder);
+    }
+
+    return err;
 }

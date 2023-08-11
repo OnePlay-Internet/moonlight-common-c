@@ -31,6 +31,7 @@ uint16_t AudioPortNumber;
 uint16_t VideoPortNumber;
 SS_PING AudioPingPayload;
 SS_PING VideoPingPayload;
+uint32_t SunshineFeatureFlags;
 
 // Connection stages
 static const char* stageNames[STAGE_MAX] = {
@@ -215,12 +216,29 @@ int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION stre
 
     if (drCallbacks != NULL && (drCallbacks->capabilities & CAPABILITY_PULL_RENDERER) && drCallbacks->submitDecodeUnit) {
         Limelog("CAPABILITY_PULL_RENDERER cannot be set with a submitDecodeUnit callback\n");
+        LC_ASSERT(false);
         err = -1;
         goto Cleanup;
     }
 
     if (drCallbacks != NULL && (drCallbacks->capabilities & CAPABILITY_PULL_RENDERER) && (drCallbacks->capabilities & CAPABILITY_DIRECT_SUBMIT)) {
         Limelog("CAPABILITY_PULL_RENDERER and CAPABILITY_DIRECT_SUBMIT cannot be set together\n");
+        LC_ASSERT(false);
+        err = -1;
+        goto Cleanup;
+    }
+
+    if (serverInfo->serverCodecModeSupport == 0) {
+        Limelog("serverCodecModeSupport field in SERVER_INFORMATION must be set!\n");
+        LC_ASSERT(false);
+        err = -1;
+        goto Cleanup;
+    }
+
+    // Extract the appversion from the supplied string
+    if (extractVersionQuadFromString(serverInfo->serverInfoAppVersion,
+                                     AppVersionQuad) < 0) {
+        Limelog("Invalid appversion string: %s\n", serverInfo->serverInfoAppVersion);
         err = -1;
         goto Cleanup;
     }
@@ -298,7 +316,7 @@ int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION stre
     }
 
     // Dimensions over 4096 are only supported with HEVC on NVENC
-    if (!StreamConfig.supportsHevc &&
+    if (!(StreamConfig.supportedVideoFormats & ~VIDEO_FORMAT_MASK_H264) &&
             (StreamConfig.width > 4096 || StreamConfig.height > 4096)) {
         Limelog("WARNING: Streaming at resolutions above 4K using H.264 will likely fail! Trying anyway!\n");
     }
@@ -312,19 +330,12 @@ int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION stre
     // resolutions will work and which won't, but we can at least exclude
     // 4K from RFI to avoid significant persistent artifacts after frame loss.
     if (StreamConfig.width == 3840 && StreamConfig.height == 2160 &&
-            (VideoCallbacks.capabilities & CAPABILITY_REFERENCE_FRAME_INVALIDATION_AVC)) {
-        Limelog("Disabling reference frame invalidation for 4K streaming\n");
+            (VideoCallbacks.capabilities & CAPABILITY_REFERENCE_FRAME_INVALIDATION_AVC) &&
+            !IS_SUNSHINE()) {
+        Limelog("Disabling reference frame invalidation for 4K streaming with GFE\n");
         VideoCallbacks.capabilities &= ~CAPABILITY_REFERENCE_FRAME_INVALIDATION_AVC;
     }
     
-    // Extract the appversion from the supplied string
-    if (extractVersionQuadFromString(serverInfo->serverInfoAppVersion,
-                                     AppVersionQuad) < 0) {
-        Limelog("Invalid appversion string: %s\n", serverInfo->serverInfoAppVersion);
-        err = -1;
-        goto Cleanup;
-    }
-
     Limelog("Initializing platform...");
     ListenerCallbacks.stageStarting(STAGE_PLATFORM_INIT);
     err = initializePlatform();

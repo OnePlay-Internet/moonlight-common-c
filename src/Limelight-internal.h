@@ -41,6 +41,22 @@ extern uint16_t VideoPortNumber;
 extern SS_PING AudioPingPayload;
 extern SS_PING VideoPingPayload;
 
+#define SS_FF_PEN_TOUCH_EVENTS 0x01
+#define SS_FF_CONTROLLER_TOUCH_EVENTS 0x02
+extern uint32_t SunshineFeatureFlags;
+
+// ENet channel ID values
+#define CTRL_CHANNEL_GENERIC      0x00
+#define CTRL_CHANNEL_URGENT       0x01 // IDR and reference frame invalidation requests
+#define CTRL_CHANNEL_KEYBOARD     0x02
+#define CTRL_CHANNEL_MOUSE        0x03
+#define CTRL_CHANNEL_PEN          0x04
+#define CTRL_CHANNEL_TOUCH        0x05
+#define CTRL_CHANNEL_UTF8         0x06
+#define CTRL_CHANNEL_GAMEPAD_BASE 0x10 // 0x10 to 0x1F by controller index
+#define CTRL_CHANNEL_SENSOR_BASE  0x20 // 0x20 to 0x2F by controller index
+#define CTRL_CHANNEL_COUNT        0x30
+
 #ifndef UINT24_MAX
 #define UINT24_MAX 0xFFFFFF
 #endif
@@ -76,6 +92,7 @@ extern SS_PING VideoPingPayload;
 int serviceEnetHost(ENetHost* client, ENetEvent* event, enet_uint32 timeoutMs);
 int gracefullyDisconnectEnetPeer(ENetHost* host, ENetPeer* peer, enet_uint32 lingerTimeoutMs);
 int extractVersionQuadFromString(const char* string, int* quad);
+bool isReferenceFrameInvalidationSupportedByDecoder(void);
 bool isReferenceFrameInvalidationEnabled(void);
 void* extendBuffer(void* ptr, size_t newSize);
 
@@ -94,7 +111,7 @@ void connectionReceivedCompleteFrame(int frameIndex);
 void connectionSawFrame(int frameIndex);
 void connectionLostPackets(int lastReceivedPacket, int nextReceivedPacket);
 void connectionSendFrameFecStatus(PSS_FRAME_FEC_STATUS fecStatus);
-int sendInputPacketOnControlStream(unsigned char* data, int length);
+int sendInputPacketOnControlStream(unsigned char* data, int length, uint8_t channelId, uint32_t flags);
 bool isControlDataInTransit(void);
 
 int performRtspHandshake(PSERVER_INFORMATION serverInfo, PORT_DETAILS ports);

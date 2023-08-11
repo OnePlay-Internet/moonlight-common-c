@@ -1,6 +1,12 @@
 #pragma once
 
+#include <stdint.h>
+
 #pragma pack(push, 1)
+
+// netfloat is just a little-endian float in byte form
+// for network transmission.
+typedef uint8_t netfloat[4];
 
 typedef struct _NV_INPUT_HEADER {
     uint32_t size; // Size of packet (excluding this field) - Big Endian
@@ -82,7 +88,7 @@ typedef struct _NV_CONTROLLER_PACKET {
 #define MULTI_CONTROLLER_MAGIC_GEN5 0x0000000C
 #define MC_HEADER_B 0x001A
 #define MC_MID_B 0x0014
-#define MC_TAIL_A 0x0000009C
+#define MC_TAIL_A 0x009C
 #define MC_TAIL_B 0x0055
 typedef struct _NV_MULTI_CONTROLLER_PACKET {
     NV_INPUT_HEADER header;
@@ -97,7 +103,8 @@ typedef struct _NV_MULTI_CONTROLLER_PACKET {
     short leftStickY;
     short rightStickX;
     short rightStickY;
-    int tailA;
+    short tailA;
+    short buttonFlags2; // Sunshine protocol extension (always 0 for GFE)
     short tailB;
 } NV_MULTI_CONTROLLER_PACKET, *PNV_MULTI_CONTROLLER_PACKET;
 
@@ -115,5 +122,77 @@ typedef struct _SS_HSCROLL_PACKET {
     NV_INPUT_HEADER header;
     short scrollAmount;
 } SS_HSCROLL_PACKET, *PSS_HSCROLL_PACKET;
+
+#define SS_TOUCH_MAGIC 0x55000002
+typedef struct _SS_TOUCH_PACKET {
+    NV_INPUT_HEADER header;
+    uint8_t eventType;
+    uint8_t zero[1]; // Alignment/reserved
+    uint16_t rotation;
+    uint32_t pointerId;
+    netfloat x;
+    netfloat y;
+    netfloat pressureOrDistance;
+    netfloat contactAreaMajor;
+    netfloat contactAreaMinor;
+} SS_TOUCH_PACKET, *PSS_TOUCH_PACKET;
+
+#define SS_PEN_MAGIC 0x55000003
+typedef struct _SS_PEN_PACKET {
+    NV_INPUT_HEADER header;
+    uint8_t eventType;
+    uint8_t toolType;
+    uint8_t penButtons;
+    uint8_t zero[1]; // Alignment/reserved
+    netfloat x;
+    netfloat y;
+    netfloat pressureOrDistance;
+    uint16_t rotation;
+    uint8_t tilt;
+    uint8_t zero2[1];
+    netfloat contactAreaMajor;
+    netfloat contactAreaMinor;
+} SS_PEN_PACKET, *PSS_PEN_PACKET;
+
+#define SS_CONTROLLER_ARRIVAL_MAGIC 0x55000004
+typedef struct _SS_CONTROLLER_ARRIVAL_PACKET {
+    NV_INPUT_HEADER header;
+    uint8_t controllerNumber;
+    uint8_t type;
+    uint16_t capabilities;
+    uint32_t supportedButtonFlags;
+} SS_CONTROLLER_ARRIVAL_PACKET, *PSS_CONTROLLER_ARRIVAL_PACKET;
+
+#define SS_CONTROLLER_TOUCH_MAGIC 0x55000005
+typedef struct _SS_CONTROLLER_TOUCH_PACKET {
+    NV_INPUT_HEADER header;
+    uint8_t controllerNumber;
+    uint8_t eventType;
+    uint8_t zero[2]; // Alignment/reserved
+    uint32_t pointerId;
+    netfloat x;
+    netfloat y;
+    netfloat pressure;
+} SS_CONTROLLER_TOUCH_PACKET, *PSS_CONTROLLER_TOUCH_PACKET;
+
+#define SS_CONTROLLER_MOTION_MAGIC 0x55000006
+typedef struct _SS_CONTROLLER_MOTION_PACKET {
+    NV_INPUT_HEADER header;
+    uint8_t controllerNumber;
+    uint8_t motionType;
+    uint8_t zero[2]; // Alignment/reserved
+    netfloat x;
+    netfloat y;
+    netfloat z;
+} SS_CONTROLLER_MOTION_PACKET, *PSS_CONTROLLER_MOTION_PACKET;
+
+#define SS_CONTROLLER_BATTERY_MAGIC 0x55000007
+typedef struct _SS_CONTROLLER_BATTERY_PACKET {
+    NV_INPUT_HEADER header;
+    uint8_t controllerNumber;
+    uint8_t batteryState;
+    uint8_t batteryPercentage;
+    uint8_t zero[1]; // Alignment/reserved
+} SS_CONTROLLER_BATTERY_PACKET, *PSS_CONTROLLER_BATTERY_PACKET;
 
 #pragma pack(pop)

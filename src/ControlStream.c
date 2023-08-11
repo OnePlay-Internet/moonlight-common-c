@@ -85,6 +85,9 @@ static PPLT_CRYPTO_CONTEXT decryptionCtx;
 #define IDX_RUMBLE_DATA 6
 #define IDX_TERMINATION 7
 #define IDX_HDR_INFO 8
+#define IDX_RUMBLE_TRIGGER_DATA 9
+#define IDX_SET_MOTION_EVENT 10
+#define IDX_SET_RGB_LED 11
 
 #define CONTROL_STREAM_TIMEOUT_SEC 10
 #define CONTROL_STREAM_LINGER_TIMEOUT_SEC 2
@@ -99,6 +102,9 @@ static const short packetTypesGen3[] = {
     -1,     // Rumble data (unused)
     -1,     // Termination (unused)
     -1,     // HDR mode (unused)
+    -1,     // Rumble triggers (unused)
+    -1,     // Set motion event (unused)
+    -1,     // Set RGB LED (unused)
 };
 static const short packetTypesGen4[] = {
     0x0606, // Request IDR frame
@@ -110,6 +116,9 @@ static const short packetTypesGen4[] = {
     -1,     // Rumble data (unused)
     -1,     // Termination (unused)
     -1,     // HDR mode (unused)
+    -1,     // Rumble triggers (unused)
+    -1,     // Set motion event (unused)
+    -1,     // Set RGB LED (unused)
 };
 static const short packetTypesGen5[] = {
     0x0305, // Start A
@@ -121,6 +130,9 @@ static const short packetTypesGen5[] = {
     -1,     // Rumble data (unused)
     -1,     // Termination (unused)
     -1,     // HDR mode (unknown)
+    -1,     // Rumble triggers (unused)
+    -1,     // Set motion event (unused)
+    -1,     // Set RGB LED (unused)
 };
 static const short packetTypesGen7[] = {
     0x0305, // Start A
@@ -132,6 +144,9 @@ static const short packetTypesGen7[] = {
     0x010b, // Rumble data
     0x0100, // Termination
     0x010e, // HDR mode
+    -1,     // Rumble triggers (unused)
+    -1,     // Set motion event (unused)
+    -1,     // Set RGB LED (unused)
 };
 static const short packetTypesGen7Enc[] = {
     0x0302, // Request IDR frame
@@ -143,6 +158,9 @@ static const short packetTypesGen7Enc[] = {
     0x010b, // Rumble data
     0x0109, // Termination (extended)
     0x010e, // HDR mode
+    0x5500, // Rumble triggers (Sunshine protocol extension)
+    0x5501, // Set motion event (Sunshine protocol extension)
+    0x5502, // Set RGB LED (Sunshine protocol extension)
 };
 
 static const char requestIdrFrameGen3[] = { 0, 0 };
@@ -541,11 +559,16 @@ static bool isPacketSentWaitingForAck(ENetPacket* packet) {
     return false;
 }
 
-static bool sendMessageEnet(short ptype, short paylen, const void* payload, bool reliable) {
+static bool sendMessageEnet(short ptype, short paylen, const void* payload, uint8_t channelId, uint32_t flags) {
     ENetPacket* enetPacket;
     int err;
 
     LC_ASSERT(AppVersionQuad[0] >= 5);
+
+    // Only send reliable packets to GFE
+    if (!IS_SUNSHINE()) {
+        flags = ENET_PACKET_FLAG_RELIABLE;
+    }
 
     if (encryptedControlStream) {
         PNVCTL_ENCRYPTED_PACKET_HEADER encPacket;
@@ -554,7 +577,7 @@ static bool sendMessageEnet(short ptype, short paylen, const void* payload, bool
 
         enetPacket = enet_packet_create(NULL,
                                         sizeof(*encPacket) + AES_GCM_TAG_LENGTH + sizeof(*packet) + paylen,
-                                        reliable ? ENET_PACKET_FLAG_RELIABLE : ENET_PACKET_FLAG_UNSEQUENCED);
+                                        flags);
         if (enetPacket == NULL) {
             return false;
         }
@@ -588,7 +611,7 @@ static bool sendMessageEnet(short ptype, short paylen, const void* payload, bool
     else {
         PNVCTL_ENET_PACKET_HEADER_V1 packet;
         enetPacket = enet_packet_create(NULL, sizeof(*packet) + paylen,
-                                        reliable ? ENET_PACKET_FLAG_RELIABLE : ENET_PACKET_FLAG_UNSEQUENCED);
+                                        flags);
         if (enetPacket == NULL) {
             return false;
         }
@@ -607,11 +630,25 @@ static bool sendMessageEnet(short ptype, short paylen, const void* payload, bool
     enetPacket->userData = (void*)&packetFreed;
     enetPacket->freeCallback = enetPacketFreeCb;
 
+    // Always use channel 0 for GFE and if the requested channel exceeds
+    // the peer's supported channel count.
+    if (!IS_SUNSHINE() || channelId >= peer->channelCount) {
+        channelId = 0;
+
+        // Send unreliable traffic as reliable if we only have one channel.
+        // This avoids unwanted sequencing between reliable and unreliable
+        // traffic that can lead to delays.
+        if (flags == 0) {
+            flags |= ENET_PACKET_FLAG_RELIABLE;
+            enetPacket->flags |= ENET_PACKET_FLAG_RELIABLE;
+        }
+    }
+
     // Queue the packet to be sent
-    err = enet_peer_send(peer, 0, enetPacket);
+    err = enet_peer_send(peer, channelId, enetPacket);
 
     // Wait until the packet is actually sent to provide backpressure on senders
-    if (err == 0 && reliable) {
+    if (err == 0 && (flags & ENET_PACKET_FLAG_RELIABLE)) {
         // Try to send the packet
         enet_host_service(client, NULL, 0);
 
@@ -679,13 +716,13 @@ static bool sendMessageTcp(short ptype, short paylen, const void* payload) {
     return true;
 }
 
-static bool sendMessageAndForget(short ptype, short paylen, const void* payload) {
+static bool sendMessageAndForget(short ptype, short paylen, const void* payload, uint8_t channelId, uint32_t flags) {
     bool ret;
 
     // Unlike regular sockets, ENet sockets aren't safe to invoke from multiple
     // threads at once. We have to synchronize them with a lock.
     if (AppVersionQuad[0] >= 5) {
-        ret = sendMessageEnet(ptype, paylen, payload, true);
+        ret = sendMessageEnet(ptype, paylen, payload, channelId, flags);
     }
     else {
         ret = sendMessageTcp(ptype, paylen, payload);
@@ -694,9 +731,9 @@ static bool sendMessageAndForget(short ptype, short paylen, const void* payload)
     return ret;
 }
 
-static bool sendMessageAndDiscardReply(short ptype, short paylen, const void* payload) {
+static bool sendMessageAndDiscardReply(short ptype, short paylen, const void* payload, uint8_t channelId, uint32_t flags) {
     if (AppVersionQuad[0] >= 5) {
-        if (!sendMessageEnet(ptype, paylen, payload, true)) {
+        if (!sendMessageEnet(ptype, paylen, payload, channelId, flags)) {
             return false;
         }
     }
@@ -899,6 +936,51 @@ static void controlReceiveThreadFunc(void* context) {
 
                 ListenerCallbacks.rumble(controllerNumber, lowFreqRumble, highFreqRumble);
             }
+            else if (ctlHdr->type == packetTypes[IDX_RUMBLE_TRIGGER_DATA]) {
+                BYTE_BUFFER bb;
+
+                BbInitializeWrappedBuffer(&bb, (char*)ctlHdr, sizeof(*ctlHdr), packetLength - sizeof(*ctlHdr), BYTE_ORDER_LITTLE);
+
+                uint16_t controllerNumber;
+                uint16_t leftTriggerMotor;
+                uint16_t rightTriggerMotor;
+
+                BbGet16(&bb, &controllerNumber);
+                BbGet16(&bb, &leftTriggerMotor);
+                BbGet16(&bb, &rightTriggerMotor);
+
+                ListenerCallbacks.rumbleTriggers(controllerNumber, leftTriggerMotor, rightTriggerMotor);
+            }
+            else if (ctlHdr->type == packetTypes[IDX_SET_MOTION_EVENT]) {
+                BYTE_BUFFER bb;
+
+                BbInitializeWrappedBuffer(&bb, (char*)ctlHdr, sizeof(*ctlHdr), packetLength - sizeof(*ctlHdr), BYTE_ORDER_LITTLE);
+
+                uint16_t controllerNumber;
+                uint16_t reportRateHz;
+                uint8_t motionType;
+
+                BbGet16(&bb, &controllerNumber);
+                BbGet16(&bb, &reportRateHz);
+                BbGet8(&bb, &motionType);
+
+                ListenerCallbacks.setMotionEventState(controllerNumber, motionType, reportRateHz);
+            }
+            else if (ctlHdr->type == packetTypes[IDX_SET_RGB_LED]) {
+                BYTE_BUFFER bb;
+
+                BbInitializeWrappedBuffer(&bb, (char*)ctlHdr, sizeof(*ctlHdr), packetLength - sizeof(*ctlHdr), BYTE_ORDER_LITTLE);
+
+                uint16_t controllerNumber;
+                uint8_t r, g, b;
+
+                BbGet16(&bb, &controllerNumber);
+                BbGet8(&bb, &r);
+                BbGet8(&bb, &g);
+                BbGet8(&bb, &b);
+
+                ListenerCallbacks.setControllerLED(controllerNumber, r, g, b);
+            }
             else if (ctlHdr->type == packetTypes[IDX_HDR_INFO]) {
                 BYTE_BUFFER bb;
                 uint8_t enableByte;
@@ -1036,7 +1118,11 @@ static void lossStatsThreadFunc(void* context) {
 
                 while (LbqPollQueueElement(&frameFecStatusQueue, (void**)&queuedFrameStatus) == LBQ_SUCCESS) {
                     // Send as an unreliable packet, since it's not a critical message
-                    if (!sendMessageEnet(SS_FRAME_FEC_PTYPE, sizeof(queuedFrameStatus->fecStatus), &queuedFrameStatus->fecStatus, false)) {
+                    if (!sendMessageEnet(SS_FRAME_FEC_PTYPE,
+                                         sizeof(queuedFrameStatus->fecStatus),
+                                         &queuedFrameStatus->fecStatus,
+                                         CTRL_CHANNEL_GENERIC,
+                                         ENET_PACKET_FLAG_UNSEQUENCED)) {
                         Limelog("Loss Stats: Sending frame FEC status message failed: %d\n", (int)LastSocketError());
                         ListenerCallbacks.connectionTerminated(LastSocketFail());
                         free(queuedFrameStatus);
@@ -1048,7 +1134,11 @@ static void lossStatsThreadFunc(void* context) {
             }
 
             // Send the message (and don't expect a response)
-            if (!sendMessageAndForget(0x0200, sizeof(periodicPingPayload), periodicPingPayload)) {
+            if (!sendMessageAndForget(0x0200,
+                                      sizeof(periodicPingPayload),
+                                      periodicPingPayload,
+                                      CTRL_CHANNEL_GENERIC,
+                                      0)) {
                 Limelog("Loss Stats: Transaction failed: %d\n", (int)LastSocketError());
                 ListenerCallbacks.connectionTerminated(LastSocketFail());
                 return;
@@ -1084,7 +1174,10 @@ static void lossStatsThreadFunc(void* context) {
 
             // Send the message (and don't expect a response)
             if (!sendMessageAndForget(packetTypes[IDX_LOSS_STATS],
-                payloadLengths[IDX_LOSS_STATS], lossStatsPayload)) {
+                                      payloadLengths[IDX_LOSS_STATS],
+                                      lossStatsPayload,
+                                      CTRL_CHANNEL_GENERIC,
+                                      0)) {
                 free(lossStatsPayload);
                 Limelog("Loss Stats: Transaction failed: %d\n", (int)LastSocketError());
                 ListenerCallbacks.connectionTerminated(LastSocketFail());
@@ -1123,7 +1216,10 @@ static void requestIdrFrame(void) {
 
         // Send the reference frame invalidation request and read the response
         if (!sendMessageAndDiscardReply(packetTypes[IDX_INVALIDATE_REF_FRAMES],
-            payloadLengths[IDX_INVALIDATE_REF_FRAMES], payload)) {
+                                        payloadLengths[IDX_INVALIDATE_REF_FRAMES],
+                                        payload,
+                                        CTRL_CHANNEL_URGENT,
+                                        ENET_PACKET_FLAG_RELIABLE)) {
             Limelog("Request IDR Frame: Transaction failed: %d\n", (int)LastSocketError());
             ListenerCallbacks.connectionTerminated(LastSocketFail());
             return;
@@ -1132,7 +1228,10 @@ static void requestIdrFrame(void) {
     else {
         // Send IDR frame request and read the response
         if (!sendMessageAndDiscardReply(packetTypes[IDX_REQUEST_IDR_FRAME],
-            payloadLengths[IDX_REQUEST_IDR_FRAME], preconstructedPayloads[IDX_REQUEST_IDR_FRAME])) {
+                                        payloadLengths[IDX_REQUEST_IDR_FRAME],
+                                        preconstructedPayloads[IDX_REQUEST_IDR_FRAME],
+                                        CTRL_CHANNEL_URGENT,
+                                        ENET_PACKET_FLAG_RELIABLE)) {
             Limelog("Request IDR Frame: Transaction failed: %d\n", (int)LastSocketError());
             ListenerCallbacks.connectionTerminated(LastSocketFail());
             return;
@@ -1154,7 +1253,9 @@ static void requestInvalidateReferenceFrames(int startFrame, int endFrame) {
 
     // Send the reference frame invalidation request and read the response
     if (!sendMessageAndDiscardReply(packetTypes[IDX_INVALIDATE_REF_FRAMES],
-        payloadLengths[IDX_INVALIDATE_REF_FRAMES], payload)) {
+                                    payloadLengths[IDX_INVALIDATE_REF_FRAMES],
+                                    payload, CTRL_CHANNEL_URGENT,
+                                    ENET_PACKET_FLAG_RELIABLE)) {
         Limelog("Request Invaldiate Reference Frames: Transaction failed: %d\n", (int)LastSocketError());
         ListenerCallbacks.connectionTerminated(LastSocketFail());
         return;
@@ -1263,11 +1364,11 @@ int stopControlStream(void) {
 }
 
 // Called by the input stream to send a packet for Gen 5+ servers
-int sendInputPacketOnControlStream(unsigned char* data, int length) {
+int sendInputPacketOnControlStream(unsigned char* data, int length, uint8_t channelId, uint32_t flags) {
     LC_ASSERT(AppVersionQuad[0] >= 5);
 
     // Send the input data (no reply expected)
-    if (sendMessageAndForget(packetTypes[IDX_INPUT_DATA], length, data) == 0) {
+    if (sendMessageAndForget(packetTypes[IDX_INPUT_DATA], length, data, channelId, flags) == 0) {
         return -1;
     }
 
@@ -1321,8 +1422,8 @@ int startControlStream(void) {
         enet_address_set_address(&address, (struct sockaddr *)&RemoteAddr, RemoteAddrLen);
         enet_address_set_port(&address, ControlPortNumber);
 
-        // Create a client that can use 1 outgoing connection and 1 channel
-        client = enet_host_create(address.address.ss_family, NULL, 1, 1, 0, 0);
+        // Create a client
+        client = enet_host_create(address.address.ss_family, NULL, 1, CTRL_CHANNEL_COUNT, 0, 0);
         if (client == NULL) {
             stopping = true;
             return -1;
@@ -1331,7 +1432,7 @@ int startControlStream(void) {
         client->intercept = ignoreDisconnectIntercept;
 
         // Connect to the host
-        peer = enet_host_connect(client, &address, 1, 0);
+        peer = enet_host_connect(client, &address, CTRL_CHANNEL_COUNT, 0);
         if (peer == NULL) {
             stopping = true;
             enet_host_destroy(client);
@@ -1408,8 +1509,10 @@ int startControlStream(void) {
 
     // Send START A
     if (!sendMessageAndDiscardReply(packetTypes[IDX_START_A],
-        payloadLengths[IDX_START_A],
-        preconstructedPayloads[IDX_START_A])) {
+                                    payloadLengths[IDX_START_A],
+                                    preconstructedPayloads[IDX_START_A],
+                                    CTRL_CHANNEL_GENERIC,
+                                    ENET_PACKET_FLAG_RELIABLE)) {
         Limelog("Start A failed: %d\n", (int)LastSocketError());
         err = LastSocketFail();
         stopping = true;
@@ -1440,8 +1543,10 @@ int startControlStream(void) {
 
     // Send START B
     if (!sendMessageAndDiscardReply(packetTypes[IDX_START_B],
-        payloadLengths[IDX_START_B],
-        preconstructedPayloads[IDX_START_B])) {
+                                    payloadLengths[IDX_START_B],
+                                    preconstructedPayloads[IDX_START_B],
+                                    CTRL_CHANNEL_GENERIC,
+                                    ENET_PACKET_FLAG_RELIABLE)) {
         Limelog("Start B failed: %d\n", (int)LastSocketError());
         err = LastSocketFail();
         stopping = true;

@@ -707,6 +707,64 @@ static bool parseUrlAddrFromRtspUrlString(const char* rtspUrlString, char* desti
     return true;
 }
 
+// SDP attributes are in the form:
+// a=x-nv-bwe.bwuSafeZoneLowLimit:70\r\n
+bool parseSdpAttributeToUInt(const char* payload, const char* name, unsigned int* val) {
+    // Find the entry for the specified attribute name
+    char* attribute = strstr(payload, name);
+    if (!attribute) {
+        return false;
+    }
+
+    // Locate the start of the value
+    char* valst = strstr(attribute, ":");
+    if (!valst) {
+        return false;
+    }
+
+    // Locate the end of the value
+    char* valend;
+    if (!(valend = strstr(valst, "\r")) && !(valend = strstr(valst, "\n"))) {
+        return false;
+    }
+
+    // Swap the end character for a null terminator, read the integer, then swap it back
+    char valendchar = *valend;
+    *valend = 0;
+    *val = strtoul(valst + 1, NULL, 0);
+    *valend = valendchar;
+
+    return true;
+}
+
+bool parseSdpAttributeToInt(const char* payload, const char* name, int* val) {
+    // Find the entry for the specified attribute name
+    char* attribute = strstr(payload, name);
+    if (!attribute) {
+        return false;
+    }
+
+    // Locate the start of the value
+    char* valst = strstr(attribute, ":");
+    if (!valst) {
+        return false;
+    }
+
+    // Locate the end of the value
+    char* valend;
+    if (!(valend = strstr(valst, "\r")) && !(valend = strstr(valst, "\n"))) {
+        return false;
+    }
+
+    // Swap the end character for a null terminator, read the integer, then swap it back
+    char valendchar = *valend;
+    *valend = 0;
+    *val = strtol(valst + 1, NULL, 0);
+    *valend = valendchar;
+
+    return true;
+}
+
 // Perform RTSP Handshake with the streaming server machine as part of the connection process
 int performRtspHandshake(PSERVER_INFORMATION serverInfo, PORT_DETAILS ports) {
     int ret;
@@ -846,14 +904,28 @@ int performRtspHandshake(PSERVER_INFORMATION serverInfo, PORT_DETAILS ports) {
             goto Exit;
         }
         
-        // The RTSP DESCRIBE reply will contain a collection of SDP media attributes that
-        // describe the various supported video stream formats and include the SPS, PPS,
-        // and VPS (if applicable). We will use this information to determine whether the
-        // server can support HEVC. For some reason, they still set the MIME type of the HEVC
-        // format to H264, so we can't just look for the HEVC MIME type. What we'll do instead is
-        // look for the base 64 encoded VPS NALU prefix that is unique to the HEVC bitstream.
-        if (StreamConfig.supportsHevc && strstr(response.payload, "sprop-parameter-sets=AAAAAU")) {
-            if (StreamConfig.enableHdr) {
+        if ((StreamConfig.supportedVideoFormats & VIDEO_FORMAT_MASK_AV1) && strstr(response.payload, "AV1/90000")) {
+            if ((serverInfo->serverCodecModeSupport & SCM_AV1_MAIN10) && (StreamConfig.supportedVideoFormats & VIDEO_FORMAT_AV1_MAIN10)) {
+                NegotiatedVideoFormat = VIDEO_FORMAT_AV1_MAIN10;
+            }
+            else {
+                NegotiatedVideoFormat = VIDEO_FORMAT_AV1_MAIN8;
+
+                // Apply bitrate adjustment for SDR AV1 if the client requested one
+                if (StreamConfig.av1BitratePercentageMultiplier != 0) {
+                    StreamConfig.bitrate *= StreamConfig.av1BitratePercentageMultiplier;
+                    StreamConfig.bitrate /= 100;
+                }
+            }
+        }
+        else if ((StreamConfig.supportedVideoFormats & VIDEO_FORMAT_MASK_H265) && strstr(response.payload, "sprop-parameter-sets=AAAAAU")) {
+            // The RTSP DESCRIBE reply will contain a collection of SDP media attributes that
+            // describe the various supported video stream formats and include the SPS, PPS,
+            // and VPS (if applicable). We will use this information to determine whether the
+            // server can support HEVC. For some reason, they still set the MIME type of the HEVC
+            // format to H264, so we can't just look for the HEVC MIME type. What we'll do instead is
+            // look for the base 64 encoded VPS NALU prefix that is unique to the HEVC bitstream.
+            if ((serverInfo->serverCodecModeSupport & SCM_HEVC_MAIN10) && (StreamConfig.supportedVideoFormats & VIDEO_FORMAT_H265_MAIN10)) {
                 NegotiatedVideoFormat = VIDEO_FORMAT_H265_MAIN10;
             }
             else {
@@ -879,6 +951,11 @@ int performRtspHandshake(PSERVER_INFORMATION serverInfo, PORT_DETAILS ports) {
         ReferenceFrameInvalidationSupported = strstr(response.payload, "x-nv-video[0].refPicInvalidation") != NULL;
         if (!ReferenceFrameInvalidationSupported) {
             Limelog("Reference frame invalidation is not supported by this host\n");
+        }
+
+        // Look for the Sunshine feature flags in the SDP attributes
+        if (!parseSdpAttributeToUInt(response.payload, "x-ss-general.featureFlags", &SunshineFeatureFlags)) {
+            SunshineFeatureFlags = 0;
         }
 
         // Parse the Opus surround parameters out of the RTSP DESCRIBE response.
