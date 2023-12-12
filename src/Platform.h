@@ -52,6 +52,12 @@
 # endif
 #endif
 
+#ifdef LC_WINDOWS
+// Windows doesn't have strtok_r() but it has the same
+// function named strtok_s().
+#define strtok_r strtok_s
+#endif
+
 #include <stdio.h>
 #include "Limelight.h"
 
@@ -79,6 +85,17 @@
 #endif
 #include <assert.h>
 #define LC_ASSERT(x) assert(x)
+#endif
+
+// If we're fuzzing, we don't want to enable asserts that can be affected by
+// bad input from the remote host. LC_ASSERT_VT() is used for assertions that
+// check data that comes from the host. These checks are enabled for normal
+// debug builds, since they indicate an error in Moonlight or on the host.
+// These are disabled when fuzzing, since the traffic is intentionally invalid.
+#ifdef LC_FUZZING
+#define LC_ASSERT_VT(x)
+#else
+#define LC_ASSERT_VT(x) LC_ASSERT(x)
 #endif
 
 #ifdef _MSC_VER
@@ -122,3 +139,4 @@ int initializePlatform(void);
 void cleanupPlatform(void);
 
 uint64_t PltGetMillis(void);
+bool PltSafeStrcpy(char* dest, size_t dest_size, const char* src);

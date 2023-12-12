@@ -46,7 +46,9 @@ typedef struct _STREAM_CONFIGURATION {
     // FPS of the desired video stream
     int fps;
 
-    // Bitrate of the desired video stream (audio adds another ~1 Mbps)
+    // Bitrate of the desired video stream (audio adds another ~1 Mbps). This
+    // includes error correction data, so the actual encoder bitrate will be
+    // about 20% lower when using the standard 20% FEC configuration.
     int bitrate;
 
     // Max video packet size in bytes (use 1024 if unsure). If STREAM_CFG_AUTO
@@ -68,18 +70,6 @@ typedef struct _STREAM_CONFIGURATION {
     // Specifies the mask of supported video formats.
     // See VIDEO_FORMAT constants below.
     int supportedVideoFormats;
-
-    // Specifies the percentage that the specified bitrate will be adjusted
-    // when an HEVC stream will be delivered. This allows clients to opt to
-    // reduce bandwidth when HEVC is chosen as the video codec rather than
-    // (or in addition to) improving image quality.
-    int hevcBitratePercentageMultiplier;
-
-    // Specifies the percentage that the specified bitrate will be adjusted
-    // when an AV1 stream will be delivered. This allows clients to opt to
-    // reduce bandwidth when AV1 is chosen as the video codec rather than
-    // (or in addition to) improving image quality.
-    int av1BitratePercentageMultiplier;
 
     // If specified, the client's display refresh rate x 100. For example,
     // 59.94 Hz would be specified as 5994. This is used by recent versions
@@ -628,8 +618,15 @@ int LiSendMouseMoveAsMousePositionEvent(short deltaX, short deltaY, short refere
 // For hover events, the "contact area" is the size of the hovering finger/tool. If unavailable,
 // pass 0.0 for both contact area parameters.
 //
+// Touches can be cancelled using LI_TOUCH_EVENT_CANCEL or LI_TOUCH_EVENT_CANCEL_ALL. When using
+// LI_TOUCH_EVENT_CANCEL, only the pointerId parameter is valid. All other parameters are ignored.
+// To cancel all active touches (on focus loss, for example), use LI_TOUCH_EVENT_CANCEL_ALL.
+//
 // If unsupported by the host, this will return LI_ERR_UNSUPPORTED and the caller should consider
 // falling back to other functions to send this input (such as LiSendMousePositionEvent()).
+//
+// To determine if LiSendTouchEvent() is supported without calling it, call LiGetHostFeatureFlags()
+// and check for the LI_FF_PEN_TOUCH_EVENTS flag.
 #define LI_TOUCH_EVENT_HOVER       0x00
 #define LI_TOUCH_EVENT_DOWN        0x01
 #define LI_TOUCH_EVENT_UP          0x02
@@ -637,6 +634,7 @@ int LiSendMouseMoveAsMousePositionEvent(short deltaX, short deltaY, short refere
 #define LI_TOUCH_EVENT_CANCEL      0x04
 #define LI_TOUCH_EVENT_BUTTON_ONLY 0x05
 #define LI_TOUCH_EVENT_HOVER_LEAVE 0x06
+#define LI_TOUCH_EVENT_CANCEL_ALL  0x07
 #define LI_ROT_UNKNOWN 0xFFFF
 int LiSendTouchEvent(uint8_t eventType, uint32_t pointerId, float x, float y, float pressureOrDistance,
                      float contactAreaMajor, float contactAreaMinor, uint16_t rotation);
@@ -647,6 +645,9 @@ int LiSendTouchEvent(uint8_t eventType, uint32_t pointerId, float x, float y, fl
 //
 // x, y, pressure, rotation, contact area, and tilt are ignored for LI_TOUCH_EVENT_BUTTON_ONLY events.
 // If one of those changes, send LI_TOUCH_EVENT_MOVE or LI_TOUCH_EVENT_HOVER instead.
+//
+// To determine if LiSendPenEvent() is supported without calling it, call LiGetHostFeatureFlags()
+// and check for the LI_FF_PEN_TOUCH_EVENTS flag.
 #define LI_TOOL_TYPE_UNKNOWN 0x00
 #define LI_TOOL_TYPE_PEN     0x01
 #define LI_TOOL_TYPE_ERASER  0x02
@@ -716,7 +717,7 @@ int LiSendUtf8TextEvent(const char *text, unsigned int length);
 
 // This function queues a controller event to be sent to the remote server. It will
 // be seen by the computer as the first controller.
-int LiSendControllerEvent(short buttonFlags, unsigned char leftTrigger, unsigned char rightTrigger,
+int LiSendControllerEvent(int buttonFlags, unsigned char leftTrigger, unsigned char rightTrigger,
     short leftStickX, short leftStickY, short rightStickX, short rightStickY);
 
 // This function queues a controller event to be sent to the remote server. The controllerNumber
@@ -767,6 +768,9 @@ int LiSendControllerArrivalEvent(uint8_t controllerNumber, uint16_t activeGamepa
 //
 // If unsupported by the host, this will return LI_ERR_UNSUPPORTED and the caller should consider
 // using this touch input to simulate trackpad input.
+//
+// To determine if LiSendControllerTouchEvent() is supported without calling it, call LiGetHostFeatureFlags()
+// and check for the LI_FF_CONTROLLER_TOUCH_EVENTS flag.
 int LiSendControllerTouchEvent(uint8_t controllerNumber, uint8_t eventType, uint32_t pointerId, float x, float y, float pressure);
 
 // This function allows clients to send controller-associated motion events to a supported host.
@@ -941,6 +945,11 @@ bool LiGetHdrMetadata(PSS_HDR_METADATA metadata);
 // call this API instead. Note that this function does not guarantee that the *next* frame will be an IDR
 // frame, just that an IDR frame will arrive soon.
 void LiRequestIdrFrame(void);
+
+// This function returns any extended feature flags supported by the host.
+#define LI_FF_PEN_TOUCH_EVENTS        0x01 // LiSendTouchEvent()/LiSendPenEvent() supported
+#define LI_FF_CONTROLLER_TOUCH_EVENTS 0x02 // LiSendControllerTouchEvent() supported
+uint32_t LiGetHostFeatureFlags(void);
 
 #ifdef __cplusplus
 }

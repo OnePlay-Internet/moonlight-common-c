@@ -1,24 +1,9 @@
 #include "Limelight-internal.h"
 
-#ifdef LC_DEBUG
-// Print more information about dropped UDP packets
-#define LC_DEBUG_UDP_DROPPED
-#endif
-
 #define FIRST_FRAME_MAX 1500
 #define FIRST_FRAME_TIMEOUT_SEC 10
 
 #define FIRST_FRAME_PORT 47996
-
-// By default sunshine uses 512 KB for the receive buffer.
-// But on older devices it is possible that the decoder and network
-// cannot process all received packets. And new packets overwrite
-// the packets already received but not yet processed.
-// Because of this, some frames cannot be decoded.
-// Increase the receive buffer to a larger one: 64MB.
-// Just to be sure it is enough.
-// TODO: find optimal buffer size
-#define RTP_RECV_BUFFER (64 * 1024 * 1024)
 
 static RTP_VIDEO_QUEUE rtpQueue;
 
@@ -38,6 +23,14 @@ static bool receivedFullFrame;
 // the RTP queue will wait for missing/reordered packets.
 #define RTP_QUEUE_DELAY 10
 
+// This is the desired number of video packets that can be
+// stored in the socket's receive buffer. 2048 is chosen
+// because it should be large enough for all reasonable
+// frame sizes (probably 2 or 3 frames) without using too
+// much kernel memory with larger packet sizes. It also
+// can smooth over transient pauses in network traffic
+// and subsequent packet/frame bursts that follow.
+#define RTP_RECV_PACKETS_BUFFERED 2048
 
 // Initialize the video stream
 void initializeVideoStream(void) {
@@ -74,10 +67,10 @@ static void VideoPingThreadProc(void* context) {
             pingCount++;
             VideoPingPayload.sequenceNumber = BE32(pingCount);
 
-            sendto(rtpSocket, (char*)&VideoPingPayload, sizeof(VideoPingPayload), 0, (struct sockaddr*)&saddr, RemoteAddrLen);
+            sendto(rtpSocket, (char*)&VideoPingPayload, sizeof(VideoPingPayload), 0, (struct sockaddr*)&saddr, AddrLen);
         }
         else {
-            sendto(rtpSocket, legacyPingData, sizeof(legacyPingData), 0, (struct sockaddr*)&saddr, RemoteAddrLen);
+            sendto(rtpSocket, legacyPingData, sizeof(legacyPingData), 0, (struct sockaddr*)&saddr, AddrLen);
         }
 
         PltSleepMsInterruptible(&udpPingThread, 500);
@@ -105,11 +98,6 @@ static void VideoReceiveThreadProc(void* context) {
         // SO_RCVTIMEO timeout set for recv()
         useSelect = false;
     }
-
-#ifdef LC_DEBUG_UDP_DROPPED
-    uint16_t expectedSequenceNumber = 0;
-    uint16_t countNormalPackets = 0;
-#endif
 
     waitingForVideoMs = 0;
     while (!PltIsThreadInterrupted(&receiveThread)) {
@@ -153,6 +141,7 @@ static void VideoReceiveThreadProc(void* context) {
             firstDataTimeMs = PltGetMillis();
         }
 
+#ifndef LC_FUZZING
         if (!receivedFullFrame) {
             uint64_t now = PltGetMillis();
 
@@ -162,49 +151,18 @@ static void VideoReceiveThreadProc(void* context) {
                 break;
             }
         }
+#endif
+
+        if (err < (int)sizeof(RTP_PACKET)) {
+            // Runt packet
+            continue;
+        }
 
         // Convert fields to host byte-order
         packet = (PRTP_PACKET)&buffer[0];
         packet->sequenceNumber = BE16(packet->sequenceNumber);
         packet->timestamp = BE32(packet->timestamp);
         packet->ssrc = BE32(packet->ssrc);
-
-#ifdef LC_DEBUG_UDP_DROPPED
-        if (expectedSequenceNumber != packet->sequenceNumber) {
-            if (countNormalPackets > 1) {
-                uint16_t index = expectedSequenceNumber >= countNormalPackets
-                                    ? expectedSequenceNumber - countNormalPackets
-                                    : 65535 - countNormalPackets + expectedSequenceNumber;
-                Limelog("Video stream UDP received %u sequenced packets. from %u to %u\n"
-                        , countNormalPackets
-                        , index
-                        , expectedSequenceNumber - 1);
-                countNormalPackets = 1;
-            }
-
-            if (expectedSequenceNumber < packet->sequenceNumber) {
-                auto count = packet->sequenceNumber - expectedSequenceNumber;
-                if (count == 1) {
-                    Limelog("Video stream UDP dropped 1 packet %u\n"
-                        , expectedSequenceNumber);
-                } else if (count > 1) {
-                    Limelog("Video stream UDP dropped %u packets. from %u to %u\n"
-                        , count
-                        , expectedSequenceNumber
-                        , packet->sequenceNumber - 1);
-                }
-            }
-            else {
-                Limelog("Video stream UDP received packet %u that is behind current expected %u\n"
-                        , packet->sequenceNumber
-                        , expectedSequenceNumber);
-            }
-        }
-        else {
-            countNormalPackets++;
-        }
-        expectedSequenceNumber = packet->sequenceNumber + 1;
-#endif
 
         queueStatus = RtpvAddPacket(&rtpQueue, packet, err, (PRTPV_QUEUE_ENTRY)&buffer[receiveSize]);
 
@@ -213,19 +171,6 @@ static void VideoReceiveThreadProc(void* context) {
             buffer = NULL;
         }
     }
-
-#ifdef LC_DEBUG_UDP_DROPPED
-    if (countNormalPackets > 1) {
-        uint16_t index = expectedSequenceNumber >= countNormalPackets
-                         ? expectedSequenceNumber - countNormalPackets
-                         : 65535 - countNormalPackets + expectedSequenceNumber;
-        Limelog("Video stream UDP received %u sequenced packets. from %u to %u\n"
-        , countNormalPackets
-        , index
-        , expectedSequenceNumber - 1);
-        countNormalPackets = 1;
-    }
-#endif
 
     if (buffer != NULL) {
         free(buffer);
@@ -322,7 +267,8 @@ int startVideoStream(void* rendererContext, int drFlags) {
         return err;
     }
 
-    rtpSocket = bindUdpSocket(RemoteAddr.ss_family, RTP_RECV_BUFFER);
+    rtpSocket = bindUdpSocket(RemoteAddr.ss_family, &LocalAddr, AddrLen,
+                              RTP_RECV_PACKETS_BUFFERED * (StreamConfig.packetSize + MAX_RTP_HEADER_SIZE));
     if (rtpSocket == INVALID_SOCKET) {
         VideoCallbacks.cleanup();
         return LastSocketError();
@@ -353,7 +299,7 @@ int startVideoStream(void* rendererContext, int drFlags) {
 
     if (AppVersionQuad[0] == 3) {
         // Connect this socket to open port 47998 for our ping thread
-        firstFrameSocket = connectTcpSocket(&RemoteAddr, RemoteAddrLen,
+        firstFrameSocket = connectTcpSocket(&RemoteAddr, AddrLen,
                                             FIRST_FRAME_PORT, FIRST_FRAME_TIMEOUT_SEC);
         if (firstFrameSocket == INVALID_SOCKET) {
             VideoCallbacks.stop();

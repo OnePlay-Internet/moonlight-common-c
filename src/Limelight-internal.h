@@ -16,7 +16,8 @@
 // Common globals
 extern char* RemoteAddrString;
 extern struct sockaddr_storage RemoteAddr;
-extern SOCKADDR_LEN RemoteAddrLen;
+extern struct sockaddr_storage LocalAddr;
+extern SOCKADDR_LEN AddrLen;
 extern int AppVersionQuad[4];
 extern STREAM_CONFIGURATION StreamConfig;
 extern CONNECTION_LISTENER_CALLBACKS ListenerCallbacks;
@@ -28,7 +29,6 @@ extern bool HighQualitySurroundSupported;
 extern bool HighQualitySurroundEnabled;
 extern OPUS_MULTISTREAM_CONFIGURATION NormalQualityOpusConfig;
 extern OPUS_MULTISTREAM_CONFIGURATION HighQualityOpusConfig;
-extern int OriginalVideoBitrate;
 extern int AudioPacketDuration;
 extern bool AudioEncryptionEnabled;
 extern bool ReferenceFrameInvalidationSupported;
@@ -41,8 +41,6 @@ extern uint16_t VideoPortNumber;
 extern SS_PING AudioPingPayload;
 extern SS_PING VideoPingPayload;
 
-#define SS_FF_PEN_TOUCH_EVENTS 0x01
-#define SS_FF_CONTROLLER_TOUCH_EVENTS 0x02
 extern uint32_t SunshineFeatureFlags;
 
 // ENet channel ID values
@@ -76,6 +74,9 @@ extern uint32_t SunshineFeatureFlags;
 
 #define IS_SUNSHINE() (AppVersionQuad[3] < 0)
 
+// Client feature flags for x-ml-general.featureFlags SDP attribute
+#define ML_FF_FEC_STATUS 0x01 // Client sends SS_FRAME_FEC_STATUS for frame losses
+
 #define UDP_RECV_POLL_TIMEOUT_MS 100
 
 // At this value or above, we will request high quality audio unless CAPABILITY_SLOW_OPUS_DECODER
@@ -106,12 +107,12 @@ int initializeControlStream(void);
 int startControlStream(void);
 int stopControlStream(void);
 void destroyControlStream(void);
-void connectionDetectedFrameLoss(int startFrame, int endFrame);
-void connectionReceivedCompleteFrame(int frameIndex);
-void connectionSawFrame(int frameIndex);
-void connectionLostPackets(int lastReceivedPacket, int nextReceivedPacket);
+void connectionDetectedFrameLoss(uint32_t startFrame, uint32_t endFrame);
+void connectionReceivedCompleteFrame(uint32_t frameIndex);
+void connectionSawFrame(uint32_t frameIndex);
 void connectionSendFrameFecStatus(PSS_FRAME_FEC_STATUS fecStatus);
-int sendInputPacketOnControlStream(unsigned char* data, int length, uint8_t channelId, uint32_t flags);
+int sendInputPacketOnControlStream(unsigned char* data, int length, uint8_t channelId, uint32_t flags, bool moreData);
+void flushInputOnControlStream(void);
 bool isControlDataInTransit(void);
 
 int performRtspHandshake(PSERVER_INFORMATION serverInfo, PORT_DETAILS ports);

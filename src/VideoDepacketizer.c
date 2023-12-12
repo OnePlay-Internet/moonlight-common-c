@@ -49,10 +49,12 @@ typedef struct _LENTRY_INTERNAL {
 #define H264_NAL_TYPE_SPS 7
 #define H264_NAL_TYPE_PPS 8
 #define H264_NAL_TYPE_AUD 9
+#define H264_NAL_TYPE_FILLER 12
 #define HEVC_NAL_TYPE_VPS 32
 #define HEVC_NAL_TYPE_SPS 33
 #define HEVC_NAL_TYPE_PPS 34
 #define HEVC_NAL_TYPE_AUD 35
+#define HEVC_NAL_TYPE_FILLER 38
 #define HEVC_NAL_TYPE_SEI 39
 
 // Init
@@ -94,9 +96,6 @@ static void cleanupFrameState(void) {
 // Cleanup frame state and set that we're waiting for an IDR Frame
 static void dropFrameState(void) {
     // This may only be called at frame boundaries
-    if (decodingFrame) {
-        Limelog("dropFrameState() was called not at frame boundaries\n");
-    }
     LC_ASSERT(!decodingFrame);
 
     // We're dropping frame state now
@@ -153,18 +152,19 @@ void destroyVideoDepacketizer(void) {
     cleanupFrameState();
 }
 
+// NB: This function also ensures an additional byte for the NALU type exists after the start sequence
 static bool getAnnexBStartSequence(PBUFFER_DESC current, PBUFFER_DESC startSeq) {
     // We must not get called for other codecs
     LC_ASSERT(NegotiatedVideoFormat & (VIDEO_FORMAT_MASK_H264 | VIDEO_FORMAT_MASK_H265));
 
-    if (current->length < 3) {
+    if (current->length <= 3) {
         return false;
     }
 
     if (current->data[current->offset] == 0 &&
         current->data[current->offset + 1] == 0) {
         if (current->data[current->offset + 2] == 0) {
-            if (current->length >= 4 && current->data[current->offset + 3] == 1) {
+            if (current->length > 4 && current->data[current->offset + 3] == 1) {
                 // Frame start
                 if (startSeq != NULL) {
                     startSeq->data = current->data;
@@ -190,9 +190,6 @@ static bool getAnnexBStartSequence(PBUFFER_DESC current, PBUFFER_DESC startSeq) 
 
 void validateDecodeUnitForPlayback(PDECODE_UNIT decodeUnit) {
     // Frames must always have at least one buffer
-    if (decodeUnit->bufferList == NULL || decodeUnit->fullLength == 0) {
-        Limelog("Frames must always have at least one buffer.\n");
-    }
     LC_ASSERT(decodeUnit->bufferList != NULL);
     LC_ASSERT(decodeUnit->fullLength != 0);
 
@@ -201,49 +198,35 @@ void validateDecodeUnitForPlayback(PDECODE_UNIT decodeUnit) {
         // IDR frames always start with codec configuration data
         if (NegotiatedVideoFormat & VIDEO_FORMAT_MASK_H264) {
             // H.264 IDR frames should have an SPS, PPS, then picture data
-            LC_ASSERT(decodeUnit->bufferList->bufferType == BUFFER_TYPE_SPS);
-            LC_ASSERT(decodeUnit->bufferList->next != NULL);
-            LC_ASSERT(decodeUnit->bufferList->next->bufferType == BUFFER_TYPE_PPS);
-            LC_ASSERT(decodeUnit->bufferList->next->next != NULL);
-            LC_ASSERT(decodeUnit->bufferList->next->next->bufferType == BUFFER_TYPE_PICDATA);
+            LC_ASSERT_VT(decodeUnit->bufferList->bufferType == BUFFER_TYPE_SPS);
+            LC_ASSERT_VT(decodeUnit->bufferList->next != NULL);
+            LC_ASSERT_VT(decodeUnit->bufferList->next->bufferType == BUFFER_TYPE_PPS);
+            LC_ASSERT_VT(decodeUnit->bufferList->next->next != NULL);
         }
         else if (NegotiatedVideoFormat & VIDEO_FORMAT_MASK_H265) {
             // HEVC IDR frames should have an VPS, SPS, PPS, then picture data
-            LC_ASSERT(decodeUnit->bufferList->bufferType == BUFFER_TYPE_VPS);
-            LC_ASSERT(decodeUnit->bufferList->next != NULL);
-            LC_ASSERT(decodeUnit->bufferList->next->bufferType == BUFFER_TYPE_SPS);
-            LC_ASSERT(decodeUnit->bufferList->next->next != NULL);
-            LC_ASSERT(decodeUnit->bufferList->next->next->bufferType == BUFFER_TYPE_PPS);
-            LC_ASSERT(decodeUnit->bufferList->next->next->next != NULL);
-
-            // We get 2 sets of VPS, SPS, and PPS NALUs in HDR mode.
-            // FIXME: Should we normalize this or something for clients?
+            LC_ASSERT_VT(decodeUnit->bufferList->bufferType == BUFFER_TYPE_VPS);
+            LC_ASSERT_VT(decodeUnit->bufferList->next != NULL);
+            LC_ASSERT_VT(decodeUnit->bufferList->next->bufferType == BUFFER_TYPE_SPS);
+            LC_ASSERT_VT(decodeUnit->bufferList->next->next != NULL);
+            LC_ASSERT_VT(decodeUnit->bufferList->next->next->bufferType == BUFFER_TYPE_PPS);
+            LC_ASSERT_VT(decodeUnit->bufferList->next->next->next != NULL);
         }
         else if (NegotiatedVideoFormat & VIDEO_FORMAT_MASK_AV1) {
             // We don't parse the AV1 bitstream
-            LC_ASSERT(decodeUnit->bufferList->bufferType == BUFFER_TYPE_PICDATA);
+            LC_ASSERT_VT(decodeUnit->bufferList->bufferType == BUFFER_TYPE_PICDATA);
         }
         else {
-            Limelog("Frame type is IDR but NegotiatedVideoFormat not supported\n");
             LC_ASSERT(false);
         }
     }
     else {
-        if (decodeUnit->frameType != FRAME_TYPE_PFRAME) {
-            Limelog("Frame type should be P frame or IDR\n");
-        }
         LC_ASSERT(decodeUnit->frameType == FRAME_TYPE_PFRAME);
 
         // P frames always start with picture data
-        if (decodeUnit->bufferList->bufferType != BUFFER_TYPE_PICDATA) {
-            Limelog("P frames should always start with picture data\n");
-        }
         LC_ASSERT(decodeUnit->bufferList->bufferType == BUFFER_TYPE_PICDATA);
 
         // We must not dequeue a P frame before an IDR frame has been successfully processed
-        if (!idrFrameProcessed) {
-            Limelog("We must not dequeue a P frame before an IDR frame has been successfully processed\n");
-        }
         LC_ASSERT(idrFrameProcessed);
     }
 }
@@ -348,7 +331,6 @@ static bool isSeqReferenceFrameStart(PBUFFER_DESC buffer) {
         }
     }
     else {
-        Limelog("No valid negotiated video format found in isSeqReferenceFrameStart()\n");
         LC_ASSERT(false);
         return false;
     }
@@ -368,7 +350,6 @@ static bool isAccessUnitDelimiter(PBUFFER_DESC buffer) {
         return HEVC_NAL_TYPE(startSeq.data[startSeq.offset + startSeq.length]) == HEVC_NAL_TYPE_AUD;
     }
     else {
-        Limelog("No valid negotiated video format found in isAccessUnitDelimiter()\n");
         LC_ASSERT(false);
         return false;
     }
@@ -388,11 +369,31 @@ static bool isSeiNal(PBUFFER_DESC buffer) {
         return HEVC_NAL_TYPE(startSeq.data[startSeq.offset + startSeq.length]) == HEVC_NAL_TYPE_SEI;
     }
     else {
-        Limelog("No valid negotiated video format found in isSeiNal()\n");
         LC_ASSERT(false);
         return false;
     }
 }
+
+#ifdef LC_DEBUG
+static bool isFillerDataNal(PBUFFER_DESC buffer) {
+    BUFFER_DESC startSeq;
+
+    if (!getAnnexBStartSequence(buffer, &startSeq)) {
+        return false;
+    }
+
+    if (NegotiatedVideoFormat & VIDEO_FORMAT_MASK_H264) {
+        return H264_NAL_TYPE(startSeq.data[startSeq.offset + startSeq.length]) == H264_NAL_TYPE_FILLER;
+    }
+    else if (NegotiatedVideoFormat & VIDEO_FORMAT_MASK_H265) {
+        return HEVC_NAL_TYPE(startSeq.data[startSeq.offset + startSeq.length]) == HEVC_NAL_TYPE_FILLER;
+    }
+    else {
+        LC_ASSERT(false);
+        return false;
+    }
+}
+#endif
 
 static bool isPictureParameterSetNal(PBUFFER_DESC buffer) {
     BUFFER_DESC startSeq;
@@ -408,7 +409,6 @@ static bool isPictureParameterSetNal(PBUFFER_DESC buffer) {
         return HEVC_NAL_TYPE(startSeq.data[startSeq.offset + startSeq.length]) == HEVC_NAL_TYPE_PPS;
     }
     else {
-        Limelog("No valid negotiated video format found in isPictureParameterSetNal()\n");
         LC_ASSERT(false);
         return false;
     }
@@ -441,9 +441,6 @@ static void skipToNextNal(PBUFFER_DESC buffer) {
     skipToNextNalOrEnd(buffer);
 
     // If we skipped all the data, something has gone horribly wrong
-    if (buffer->length == 0) {
-        Limelog("we skipped all the data, something has gone horribly wrong\n");
-    }
     LC_ASSERT(buffer->length > 0);
 }
 
@@ -461,7 +458,6 @@ static bool isIdrFrameStart(PBUFFER_DESC buffer) {
         return HEVC_NAL_TYPE(startSeq.data[startSeq.offset + startSeq.length]) == HEVC_NAL_TYPE_VPS;
     }
     else {
-        Limelog("No valid negotiated video format found in isIdrFrameStart()\n");
         LC_ASSERT(false);
         return false;
     }
@@ -592,7 +588,6 @@ static int getBufferFlags(char* data, int length) {
         }
     }
     else {
-        Limelog("No valid negotiated video format found in getBufferFlags()\n");
         LC_ASSERT(false);
         return BUFFER_TYPE_PICDATA;
     }
@@ -626,9 +621,6 @@ static void queueFragment(PLENTRY_INTERNAL* existingEntry, char* data, int offse
             entry->entry.data = &data[offset];
 
             // The caller should have already set this up for us
-            if (entry->allocPtr == NULL) {
-                Limelog("allocPtr is NULL in queueFragment()\n");
-            }
             LC_ASSERT(entry->allocPtr != NULL);
 
             // We now own the packet buffer and will manage freeing it
@@ -640,16 +632,10 @@ static void queueFragment(PLENTRY_INTERNAL* existingEntry, char* data, int offse
         nalChainDataLength += entry->entry.length;
 
         if (nalChainTail == NULL) {
-            if (nalChainHead != NULL) {
-                Limelog("nalChainHead not NULL when nalChainTail is NULL\n");
-            }
             LC_ASSERT(nalChainHead == NULL);
             nalChainHead = nalChainTail = (PLENTRY)entry;
         }
         else {
-            if (nalChainHead == NULL) {
-                Limelog("nalChainHead is NULL when nalChainTail is not NULL\n");
-            }
             LC_ASSERT(nalChainHead != NULL);
             nalChainTail->next = (PLENTRY)entry;
             nalChainTail = nalChainTail->next;
@@ -683,9 +669,6 @@ static void processAvcHevcRtpPayloadSlow(PBUFFER_DESC currentPos, PLENTRY_INTERN
         start++;
 #endif
 
-        // Now we're decoding a frame
-        decodingFrame = true;
-
         if (isSeqReferenceFrameStart(currentPos)) {
             // No longer waiting for an IDR frame
             waitingForIdrFrame = false;
@@ -708,11 +691,9 @@ static void processAvcHevcRtpPayloadSlow(PBUFFER_DESC currentPos, PLENTRY_INTERN
         // If this is the picture data, we expect it to extend to the end of the packet
         if (containsPicData) {
             while (currentPos->length != 0) {
-                // Any NALUs we encounter on the way to the end of the packet must be reference frame slices
-                if (!isSeqReferenceFrameStart(currentPos)) {
-                    Limelog("Any NALUs we encounter on the way to the end of the packet must be reference frame slices");
-                }
-                // LC_ASSERT(isSeqReferenceFrameStart(currentPos));
+                // Any NALUs we encounter on the way to the end of the packet must be
+                // reference frame slices or filler data.
+                LC_ASSERT_VT(isSeqReferenceFrameStart(currentPos) || isFillerDataNal(currentPos));
                 skipToNextNalOrEnd(currentPos);
             }
         }
@@ -780,7 +761,7 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
     firstPacket = isFirstPacket(flags, fecCurrentBlockNumber);
     lastPacket = (flags & FLAG_EOF) && fecCurrentBlockNumber == fecLastBlockNumber;
 
-    LC_ASSERT((flags & ~(FLAG_SOF | FLAG_EOF | FLAG_CONTAINS_PIC_DATA)) == 0);
+    LC_ASSERT_VT((flags & ~(FLAG_SOF | FLAG_EOF | FLAG_CONTAINS_PIC_DATA)) == 0);
 
     streamPacketIndex = videoPacket->streamPacketIndex;
     
@@ -808,9 +789,6 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
     }
     
     // Verify that we didn't receive an incomplete frame
-    if (!(firstPacket ^ decodingFrame)) {
-        Limelog("Received an incomplete frame\n");
-    }
     LC_ASSERT(firstPacket ^ decodingFrame);
     
     // Check sequencing of this frame to ensure we didn't
@@ -835,9 +813,6 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
             dropFrameState();
         }
         else {
-            if (nextFrameNumber != frameIndex) {
-                Limelog("nextFrameNumber != frameIndex\n");
-            }
             LC_ASSERT(nextFrameNumber == frameIndex);
         }
 
@@ -864,9 +839,11 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
 
     // If this is the first packet, skip the frame header (if one exists)
     uint32_t frameHeaderSize;
-    if (firstPacket) {
+    LC_ASSERT_VT(currentPos.length > 0);
+    if (firstPacket && currentPos.length > 0) {
         // Parse the frame type from the header
-        if (APP_VERSION_AT_LEAST(7, 1, 350)) {
+        LC_ASSERT_VT(currentPos.length >= 4);
+        if (APP_VERSION_AT_LEAST(7, 1, 350) && currentPos.length >= 4) {
             switch (currentPos.data[currentPos.offset + 3]) {
             case 1: // Normal P-frame
                 break;
@@ -875,7 +852,6 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
                 // to determine if a given frame is an IDR frame.
                 if (!(NegotiatedVideoFormat & (VIDEO_FORMAT_MASK_H264 | VIDEO_FORMAT_MASK_H265))) {
                     waitingForIdrFrame = false;
-                    waitingForRefInvalFrame = false;
                     waitingForNextSuccessfulFrame = false;
                     frameType = FRAME_TYPE_IDR;
                 }
@@ -894,7 +870,7 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
                 break;
             default:
                 Limelog("Unrecognized frame type: %d", currentPos.data[currentPos.offset + 3]);
-                LC_ASSERT(false);
+                LC_ASSERT_VT(false);
                 break;
             }
         }
@@ -908,7 +884,8 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
         }
 
         // Sunshine can provide host processing latency of the frame
-        if (IS_SUNSHINE()) {
+        LC_ASSERT_VT(currentPos.length >= 3);
+        if (IS_SUNSHINE() && currentPos.length >= 3) {
             BYTE_BUFFER bb;
             BbInitializeWrappedBuffer(&bb, currentPos.data, currentPos.offset + 1, 2, BYTE_ORDER_LITTLE);
             BbGet16(&bb, &frameHostProcessingLatency);
@@ -916,7 +893,8 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
 
         // Codecs like H.264 and HEVC handle the FEC trailing zero padding just fine, but other
         // codecs need the exact length encoded separately.
-        if (!(NegotiatedVideoFormat & (VIDEO_FORMAT_MASK_H264 | VIDEO_FORMAT_MASK_H265))) {
+        LC_ASSERT_VT(currentPos.length >= 6);
+        if (!(NegotiatedVideoFormat & (VIDEO_FORMAT_MASK_H264 | VIDEO_FORMAT_MASK_H265)) && currentPos.length >= 6) {
             BYTE_BUFFER bb;
             BbInitializeWrappedBuffer(&bb, currentPos.data, currentPos.offset + 4, 2, BYTE_ORDER_LITTLE);
             BbGet16(&bb, &lastPacketPayloadLength);
@@ -930,10 +908,7 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
                 frameHeaderSize = 8;
             }
             else {
-                if (currentPos.data[0] != (char)0x81) {
-                    Limelog("LC_ASSERT(currentPos.data[0] == (char)0x81)");
-                }
-                LC_ASSERT(currentPos.data[0] == (char)0x81);
+                LC_ASSERT_VT(currentPos.data[0] == (char)0x81);
                 frameHeaderSize = 44;
             }
         }
@@ -945,10 +920,7 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
                 frameHeaderSize = 8;
             }
             else {
-                if (currentPos.data[0] != (char)0x81) {
-                    Limelog("LC_ASSERT(currentPos.data[0] == (char)0x81)\n");
-                }
-                LC_ASSERT(currentPos.data[0] == (char)0x81);
+                LC_ASSERT_VT(currentPos.data[0] == (char)0x81);
                 frameHeaderSize = 41;
             }
         }
@@ -960,10 +932,7 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
                 frameHeaderSize = 8;
             }
             else {
-                if (currentPos.data[0] != (char)0x81) {
-                    Limelog("LC_ASSERT(currentPos.data[0] == (char)0x81)\n");
-                }
-                LC_ASSERT(currentPos.data[0] == (char)0x81);
+                LC_ASSERT_VT(currentPos.data[0] == (char)0x81);
                 frameHeaderSize = 24;
             }
         }
@@ -984,16 +953,19 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
             frameHeaderSize = 0;
         }
 
-        // Skip past the frame header
-        currentPos.offset += frameHeaderSize;
-        currentPos.length -= frameHeaderSize;
+        LC_ASSERT_VT(currentPos.length >= frameHeaderSize);
+        if (currentPos.length >= frameHeaderSize) {
+            // Skip past the frame header
+            currentPos.offset += frameHeaderSize;
+            currentPos.length -= frameHeaderSize;
+        }
 
         // We only parse H.264 and HEVC at the NALU level
         if (NegotiatedVideoFormat & (VIDEO_FORMAT_MASK_H264 | VIDEO_FORMAT_MASK_H265)) {
             // The Annex B NALU start prefix must be next
             if (!getAnnexBStartSequence(&currentPos, NULL)) {
                 // If we aren't starting on a start prefix, something went wrong.
-                LC_ASSERT(false);
+                LC_ASSERT_VT(false);
 
                 // For release builds, we will try to recover by searching for one.
                 // This mimics the way most decoders handle this situation.
@@ -1046,11 +1018,11 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
         // of trailing zero padding like H.264/HEVC Annex B bitstream parsers are.
         if (lastPacket) {
             // The payload length includes the frame header, so it cannot be smaller than that
-            LC_ASSERT(lastPacketPayloadLength > frameHeaderSize);
+            LC_ASSERT_VT(lastPacketPayloadLength > frameHeaderSize);
 
             // The payload length cannot be smaller than the actual received payload
             // NB: currentPos.length is already adjusted to exclude the frameHeaderSize from above
-            LC_ASSERT(lastPacketPayloadLength - frameHeaderSize <= currentPos.length);
+            LC_ASSERT_VT(lastPacketPayloadLength - frameHeaderSize <= currentPos.length);
 
             // If the payload length is valid, truncate the packet. If not, discard this frame.
             if (lastPacketPayloadLength > frameHeaderSize && lastPacketPayloadLength - frameHeaderSize <= currentPos.length) {
@@ -1116,9 +1088,6 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
             return;
         }
 
-        if (waitingForNextSuccessfulFrame) {
-            Limelog("LC_ASSERT(!waitingForNextSuccessfulFrame)");
-        }
         LC_ASSERT(!waitingForNextSuccessfulFrame);
 
         // Carry out any pending state drops. We can't just do this
@@ -1151,9 +1120,6 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
 // that we lost a frame and submit an RFI request.
 void notifyFrameLost(unsigned int frameNumber, bool speculative) {
     // We may not invalidate frames that we've already received
-    if (frameNumber < startFrameNumber) {
-        Limelog("We may not invalidate frames that we've already received\n");
-    }
     LC_ASSERT(frameNumber >= startFrameNumber);
 
     // Drop state and determine if we need an IDR frame or if RFI is okay
@@ -1161,9 +1127,6 @@ void notifyFrameLost(unsigned int frameNumber, bool speculative) {
 
     // If dropFrameState() determined that RFI was usable, issue it now
     if (!waitingForIdrFrame) {
-        if (!waitingForRefInvalFrame) {
-            Limelog("LC_ASSERT(waitingForRefInvalFrame)\n");
-        }
         LC_ASSERT(waitingForRefInvalFrame);
 
         if (speculative) {
@@ -1193,6 +1156,9 @@ void queueRtpPacket(PRTPV_QUEUE_ENTRY queueEntryPtr) {
     if (queueEntry.packet->header & FLAG_EXTENSION) {
         dataOffset += 4; // 2 additional fields
     }
+
+    // The packet length was validated by the RtpVideoQueue
+    LC_ASSERT(queueEntry.length >= dataOffset + (int)sizeof(NV_VIDEO_PACKET));
 
     // Reuse the memory reserved for the RTPFEC_QUEUE_ENTRY to store the LENTRY_INTERNAL
     // now that we're in the depacketizer. We saved a copy of the real FEC queue entry

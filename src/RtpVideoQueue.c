@@ -1,7 +1,7 @@
 #include "Limelight-internal.h"
 #include "rs.h"
 
-#ifdef LC_DEBUG
+#if defined(LC_DEBUG) && !defined(LC_FUZZING)
 // This enables FEC validation mode with a synthetic drop
 // and recovered packet checks vs the original input. It
 // is on by default for debug builds.
@@ -95,11 +95,11 @@ static void reportFinalFrameFecStatus(PRTP_VIDEO_QUEUE queue) {
     fecStatus.frameIndex = BE32(queue->currentFrameNumber);
     fecStatus.highestReceivedSequenceNumber = BE16(queue->receivedHighestSequenceNumber);
     fecStatus.nextContiguousSequenceNumber = BE16(queue->nextContiguousSequenceNumber);
-    fecStatus.missingPacketsBeforeHighestReceived = (uint8_t)queue->missingPackets;
-    fecStatus.totalDataPackets = (uint8_t)queue->bufferDataPackets;
-    fecStatus.totalParityPackets = (uint8_t)queue->bufferParityPackets;
-    fecStatus.receivedDataPackets = (uint8_t)queue->receivedDataPackets;
-    fecStatus.receivedParityPackets = (uint8_t)queue->receivedParityPackets;
+    fecStatus.missingPacketsBeforeHighestReceived = BE16(queue->missingPackets);
+    fecStatus.totalDataPackets = BE16(queue->bufferDataPackets);
+    fecStatus.totalParityPackets = BE16(queue->bufferParityPackets);
+    fecStatus.receivedDataPackets = BE16(queue->receivedDataPackets);
+    fecStatus.receivedParityPackets = BE16(queue->receivedParityPackets);
     fecStatus.fecPercentage = (uint8_t)queue->fecPercentage;
     fecStatus.multiFecBlockIndex = (uint8_t)queue->multiFecCurrentBlockNumber;
     fecStatus.multiFecBlockCount = (uint8_t)(queue->multiFecLastBlockNumber + 1);
@@ -118,13 +118,14 @@ static bool queuePacket(PRTP_VIDEO_QUEUE queue, PRTPV_QUEUE_ENTRY newEntry, PRTP
     // If the packet is in order, we can take the fast path and avoid having
     // to loop through the whole list. If we get an out of order or missing
     // packet, the fast path will stop working and we'll use the loop instead.
-    if (packet->sequenceNumber == queue->nextContiguousSequenceNumber) {
+    //
+    // NB: It's not enough to just check next contiguous sequence number because
+    // it's possible that we hit the OOS path earlier which doesn't update the
+    // next contiguous sequence number. If that happens, we need to use the slow
+    // path for this entire frame to avoid possibly mishandling a duplicate packet.
+    if (queue->useFastQueuePath && packet->sequenceNumber == queue->nextContiguousSequenceNumber) {
         queue->nextContiguousSequenceNumber = U16(packet->sequenceNumber + 1);
-
-        // If we received the next contiguous sequence number but already have missing
-        // packets, that means we received some later packets before falling back into
-        // sequence with this one. By definition, that's OOS data so let's tag it.
-        outOfSequence = queue->missingPackets != 0;
+        outOfSequence = false;
     }
     else {
         outOfSequence = false;
@@ -141,6 +142,11 @@ static bool queuePacket(PRTP_VIDEO_QUEUE queue, PRTPV_QUEUE_ENTRY newEntry, PRTP
 
             entry = entry->next;
         }
+
+        // If we make it here, we cannot use the fast queue path for this frame because
+        // we're about to queue a non-duplicate packet out of order. This will not update
+        // nextContiguousSequenceNumber which the fast path relies on.
+        queue->useFastQueuePath = false;
     }
 
     newEntry->packet = packet;
@@ -295,6 +301,10 @@ static int reconstructFrame(PRTP_VIDEO_QUEUE queue) {
         }
 #endif
 
+        // We should never have duplicate packets enqueued
+        LC_ASSERT(packets[index] == NULL);
+        LC_ASSERT(marks[index] != 0);
+
         packets[index] = (unsigned char*) entry->packet;
         marks[index] = 0;
         
@@ -366,15 +376,15 @@ cleanup_packets:
                     int j;
                     int recoveryErrors = 0;
 
-                    LC_ASSERT(droppedDataLength <= recoveredDataLength);
-                    LC_ASSERT(droppedDataLength == recoveredDataLength || (nvPacket->flags & FLAG_EOF));
+                    LC_ASSERT_VT(droppedDataLength <= recoveredDataLength);
+                    LC_ASSERT_VT(droppedDataLength == recoveredDataLength || (nvPacket->flags & FLAG_EOF));
 
                     // Check all NV_VIDEO_PACKET fields except FEC stuff which differs in the recovered packet
-                    LC_ASSERT(nvPacket->flags == droppedNvPacket->flags);
-                    LC_ASSERT(nvPacket->frameIndex == droppedNvPacket->frameIndex);
-                    LC_ASSERT(nvPacket->streamPacketIndex == droppedNvPacket->streamPacketIndex);
-                    LC_ASSERT(nvPacket->reserved == droppedNvPacket->reserved);
-                    LC_ASSERT(!queue->multiFecCapable || nvPacket->multiFecBlocks == droppedNvPacket->multiFecBlocks);
+                    LC_ASSERT_VT(nvPacket->flags == droppedNvPacket->flags);
+                    LC_ASSERT_VT(nvPacket->frameIndex == droppedNvPacket->frameIndex);
+                    LC_ASSERT_VT(nvPacket->streamPacketIndex == droppedNvPacket->streamPacketIndex);
+                    LC_ASSERT_VT(nvPacket->reserved == droppedNvPacket->reserved);
+                    LC_ASSERT_VT(!queue->multiFecCapable || nvPacket->multiFecBlocks == droppedNvPacket->multiFecBlocks);
 
                     // Check the data itself - use memcmp() and only loop if an error is detected
                     if (memcmp(nvPacket + 1, droppedNvPacket + 1, droppedDataLength)) {
@@ -399,7 +409,7 @@ cleanup_packets:
                         }
                     }
 
-                    LC_ASSERT(recoveryErrors == 0);
+                    LC_ASSERT_VT(recoveryErrors == 0);
 
                     // This drop was fake, so we don't want to actually submit it to the depacketizer.
                     // It will get confused because it's already seen this packet before.
@@ -459,7 +469,7 @@ static void stageCompleteFecBlock(PRTP_VIDEO_QUEUE queue) {
 
         unsigned int lowestRtpSequenceNumber = entry->packet->sequenceNumber;
 
-        while (entry != NULL) {
+        do {
             // We should never encounter a packet that's lower than our next seq num
             LC_ASSERT(!isBefore16(entry->packet->sequenceNumber, nextSeqNum));
 
@@ -499,7 +509,7 @@ static void stageCompleteFecBlock(PRTP_VIDEO_QUEUE queue) {
             }
 
             entry = entry->next;
-        }
+        } while (entry != NULL);
 
         if (entry == NULL) {
             // Start at the lowest we found last enumeration
@@ -532,11 +542,16 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
     }
 
     // FLAG_EXTENSION is required for all supported versions of GFE.
-    LC_ASSERT(packet->header & FLAG_EXTENSION);
+    LC_ASSERT_VT(packet->header & FLAG_EXTENSION);
 
     int dataOffset = sizeof(*packet);
     if (packet->header & FLAG_EXTENSION) {
         dataOffset += 4; // 2 additional fields
+    }
+
+    if (length < dataOffset + (int)sizeof(NV_VIDEO_PACKET)) {
+        // Reject packets that are too small to fit a NV_VIDEO_PACKET header
+        return RTPF_RET_REJECTED;
     }
 
     PNV_VIDEO_PACKET nvPacket = (PNV_VIDEO_PACKET)(((char*)packet) + dataOffset);
@@ -552,11 +567,13 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
         nvPacket->multiFecFlags = 0x10;
         nvPacket->multiFecBlocks = 0x00;
     }
-    
+
+#ifndef LC_FUZZING
     if (isBefore16(nvPacket->frameIndex, queue->currentFrameNumber)) {
         // Reject frames behind our current frame number
         return RTPF_RET_REJECTED;
     }
+#endif
 
     uint32_t fecIndex = (nvPacket->fecInfo & 0x3FF000) >> 12;
     uint8_t fecCurrentBlockNumber = (nvPacket->multiFecBlocks >> 4) & 0x3;
@@ -651,7 +668,7 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
         // The check here looks weird, but that's because we increment the frame number
         // after successfully processing a frame.
         if (queue->currentFrameNumber != nvPacket->frameIndex) {
-            LC_ASSERT(queue->currentFrameNumber < nvPacket->frameIndex);
+            LC_ASSERT_VT(queue->currentFrameNumber < nvPacket->frameIndex);
 
             // If the frame immediately preceding this one was lost, we may have already
             // reported it using our speculative RFI logic. Don't report it again.
@@ -676,6 +693,7 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
         queue->receivedParityPackets = 0;
         queue->receivedHighestSequenceNumber = 0;
         queue->missingPackets = 0;
+        queue->useFastQueuePath = true;
         queue->reportedLostFrame = false;
         queue->bufferDataPackets = (nvPacket->fecInfo & 0xFFC00000) >> 22;
         queue->fecPercentage = (nvPacket->fecInfo & 0xFF0) >> 4;
@@ -684,25 +702,26 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
         queue->bufferHighestSequenceNumber = U16(queue->bufferFirstParitySequenceNumber + queue->bufferParityPackets - 1);
         queue->multiFecCurrentBlockNumber = fecCurrentBlockNumber;
         queue->multiFecLastBlockNumber = (nvPacket->multiFecBlocks >> 6) & 0x3;
-    } else if (isBefore16(queue->bufferHighestSequenceNumber, packet->sequenceNumber)) {
-        // In rare cases, we get extra parity packets. It's rare enough that it's probably
-        // not worth handling, so we'll just drop them.
+    }
+
+    // Reject packets above our FEC queue valid sequence number range
+    if (isBefore16(queue->bufferHighestSequenceNumber, packet->sequenceNumber)) {
         return RTPF_RET_REJECTED;
     }
 
-    LC_ASSERT(!queue->fecPercentage || U16(packet->sequenceNumber - fecIndex) == queue->bufferLowestSequenceNumber);
-    LC_ASSERT((nvPacket->fecInfo & 0xFF0) >> 4 == queue->fecPercentage);
-    LC_ASSERT((nvPacket->fecInfo & 0xFFC00000) >> 22 == queue->bufferDataPackets);
+    LC_ASSERT_VT(!queue->fecPercentage || U16(packet->sequenceNumber - fecIndex) == queue->bufferLowestSequenceNumber);
+    LC_ASSERT_VT((nvPacket->fecInfo & 0xFF0) >> 4 == queue->fecPercentage);
+    LC_ASSERT_VT((nvPacket->fecInfo & 0xFFC00000) >> 22 == queue->bufferDataPackets);
 
     // Verify that the legacy non-multi-FEC compatibility code works
-    LC_ASSERT(queue->multiFecCapable || fecCurrentBlockNumber == 0);
-    LC_ASSERT(queue->multiFecCapable || queue->multiFecLastBlockNumber == 0);
+    LC_ASSERT_VT(queue->multiFecCapable || fecCurrentBlockNumber == 0);
+    LC_ASSERT_VT(queue->multiFecCapable || queue->multiFecLastBlockNumber == 0);
 
     // Multi-block FEC details must remain the same within a single frame
-    LC_ASSERT(fecCurrentBlockNumber == queue->multiFecCurrentBlockNumber);
-    LC_ASSERT(((nvPacket->multiFecBlocks >> 6) & 0x3) == queue->multiFecLastBlockNumber);
+    LC_ASSERT_VT(fecCurrentBlockNumber == queue->multiFecCurrentBlockNumber);
+    LC_ASSERT_VT(((nvPacket->multiFecBlocks >> 6) & 0x3) == queue->multiFecLastBlockNumber);
 
-    LC_ASSERT((nvPacket->flags & FLAG_EOF) || length - dataOffset == StreamConfig.packetSize);
+    LC_ASSERT_VT((nvPacket->flags & FLAG_EOF) || length - dataOffset == StreamConfig.packetSize);
     if (!queuePacket(queue, packetEntry, packet, length, !isBefore16(packet->sequenceNumber, queue->bufferFirstParitySequenceNumber), false)) {
         return RTPF_RET_REJECTED;
     }
@@ -724,13 +743,8 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
         else {
             // If we receive a packet behind the highest sequence number, but
             // queuePacket() accepted it, we must have received a missing packet.
-            // LC_ASSERT(queue->missingPackets > 0);
-            if (queue->missingPackets > 0) {
-                queue->missingPackets--;
-            }
-            else {
-                Limelog("Received a packet behind the highest sequence number, but missing packets is zero.\n");
-            }
+            LC_ASSERT(queue->missingPackets > 0);
+            queue->missingPackets--;
         }
 
         // We explicitly assert less-than because we know we received at least one packet (this one)
