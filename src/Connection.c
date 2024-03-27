@@ -271,21 +271,20 @@ int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION stre
     ControlPortNumber = 0;
     AudioPortNumber = 0;
 
+#ifdef DYNAMIC_PORTS
+    RtspPortNumber = (unsigned short)ports.rtsp_port;
+#else
     // Parse RTSP port number from RTSP session URL
     if (!parseRtspPortNumberFromUrl(serverInfo->rtspSessionUrl, &RtspPortNumber)) {
         // Use the well known port if parsing fails
-#ifdef DYNAMIC_PORTS
-        RtspPortNumber = ports.rtsp_port;
-#else
         RtspPortNumber = 48010;
-#endif
 
         Limelog("RTSP port: %u (RTSP URL parsing failed)\n", RtspPortNumber);
     }
     else {
         Limelog("RTSP port: %u\n", RtspPortNumber);
     }
-
+#endif
     alreadyTerminated = false;
     ConnectionInterrupted = false;
     

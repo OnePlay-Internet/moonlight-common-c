@@ -768,6 +768,8 @@ int performRtspHandshake(PSERVER_INFORMATION serverInfo, PORT_DETAILS ports) {
 
     LC_ASSERT(RtspPortNumber != 0);
 
+    Limelog("RTSP port: %d\n", RtspPortNumber);
+
     // Initialize global state
     useEnet = (AppVersionQuad[0] >= 5) && (AppVersionQuad[0] <= 7) && (AppVersionQuad[2] < 404);
     currentSeqNumber = 1;
@@ -975,6 +977,9 @@ int performRtspHandshake(PSERVER_INFORMATION serverInfo, PORT_DETAILS ports) {
 
         // Parse the audio port out of the RTSP SETUP response
         LC_ASSERT(AudioPortNumber == 0);
+#ifdef DYNAMIC_PORTS
+        AudioPortNumber = (unsigned short)ports.audio_port;
+#else
         if (!parseServerPortFromTransport(&response, &AudioPortNumber)) {
             // Use the well known port if parsing fails
             AudioPortNumber = ports.audio_port;
@@ -984,6 +989,7 @@ int performRtspHandshake(PSERVER_INFORMATION serverInfo, PORT_DETAILS ports) {
         else {
             Limelog("Audio port: %u\n", AudioPortNumber);
         }
+#endif
 
         // Parse the Sunshine ping payload protocol extension if present
         memset(&AudioPingPayload, 0, sizeof(AudioPingPayload));
@@ -1051,6 +1057,9 @@ int performRtspHandshake(PSERVER_INFORMATION serverInfo, PORT_DETAILS ports) {
 
         // Parse the video port out of the RTSP SETUP response
         LC_ASSERT(VideoPortNumber == 0);
+#ifdef DYNAMIC_PORTS
+        VideoPortNumber = (unsigned short)ports.video_port;
+#else
         if (!parseServerPortFromTransport(&response, &VideoPortNumber)) {
             // Use the well known port if parsing fails
             VideoPortNumber = ports.video_port;
@@ -1060,6 +1069,7 @@ int performRtspHandshake(PSERVER_INFORMATION serverInfo, PORT_DETAILS ports) {
         else {
             Limelog("Video port: %u\n", VideoPortNumber);
         }
+#endif
 
         freeMessage(&response);
     }
@@ -1085,6 +1095,9 @@ int performRtspHandshake(PSERVER_INFORMATION serverInfo, PORT_DETAILS ports) {
 
         // Parse the control port out of the RTSP SETUP response
         LC_ASSERT(ControlPortNumber == 0);
+#ifdef DYNAMIC_PORTS
+        ControlPortNumber = (unsigned short)ports.control_port;
+#else
         if (!parseServerPortFromTransport(&response, &ControlPortNumber)) {
             // Use the well known port if parsing fails
             ControlPortNumber = ports.control_port;
@@ -1094,6 +1107,7 @@ int performRtspHandshake(PSERVER_INFORMATION serverInfo, PORT_DETAILS ports) {
         else {
             Limelog("Control port: %u\n", ControlPortNumber);
         }
+#endif
 
         freeMessage(&response);
     }
