@@ -131,6 +131,10 @@ void LiInitializeAudioCallbacks(PAUDIO_RENDERER_CALLBACKS arCallbacks) {
     memset(arCallbacks, 0, sizeof(*arCallbacks));
 }
 
+void LiInitializeAudioCaptureCallbacks(PAUDIO_CAPTURE_CALLBACKS acCallbacks){
+    memset(acCallbacks, 0, sizeof(*acCallbacks));
+}
+
 void LiInitializeConnectionCallbacks(PCONNECTION_LISTENER_CALLBACKS clCallbacks) {
     memset(clCallbacks, 0, sizeof(*clCallbacks));
 }
