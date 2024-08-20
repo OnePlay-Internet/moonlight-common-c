@@ -76,7 +76,40 @@ typedef struct _AUDIO_PACKET_HOLDER{
 static int timestamp = 0;
 static int seqNumber = 0;
 
+//#define RTP_DEBUG 1
+
+#ifdef RTP_DEBUG
+FILE* rtpFile;
+FILE* sizeFile;
+void InitPacketDebug()
+{
+    rtpFile = fopen("rtp.bin", "ab");
+    sizeFile = fopen("packetsize.txt", "w");
+}
+
+void DeinitPacketDebug()
+{
+    fclose(rtpFile);
+    fclose(sizeFile);
+}
+
+void appendToRTPFile(PAUDIO_PACKET_HOLDER data)
+{
+    fwrite(&data->data, sizeof(RTP_PACKET) + data->header.EncodedPayloadSize, 1, rtpFile);
+}
+
+void appendpacketSizeToFile(int32_t size)
+{
+    fprintf(sizeFile, "%d \n", size);
+}
+
+#endif
+
 int initializeAudioCaptureStream(void) {
+
+#ifdef RTP_DEBUG
+    InitPacketDebug();
+#endif
 
     LbqInitializeLinkedBlockingQueue(&rawFrameQueue, MAX_QUEUED_AUDIO_FRAMES);
     LbqInitializeLinkedBlockingQueue(&rawFreeFrameList, MAX_QUEUED_AUDIO_FRAMES);
@@ -185,6 +218,7 @@ int encryptData(unsigned char* plaintext, int plaintextLen,
     return 0;
 }
 
+
 bool sendInputPacket(PAUDIO_PACKET_HOLDER holder, PENCODED_AUDIO_PAYLOAD_HOLDER payload){
 
     holder->data.rtp.header = 0x80;
@@ -210,6 +244,18 @@ bool sendInputPacket(PAUDIO_PACKET_HOLDER holder, PENCODED_AUDIO_PAYLOAD_HOLDER 
         WSACleanup();
         return false;
     }
+
+#ifdef RTP_DEBUG
+    // saving 10 sec of rtp packet to file for sunshine test
+    if(seqNumber<=1000)
+    {
+        appendToRTPFile(holder);
+        appendpacketSizeToFile((int32_t)(sizeof(RTP_PACKET)+ holder->header.EncodedPayloadSize));
+    } else
+    {
+        DeinitPacketDebug();
+    }
+#endif
 
     //PltSleepMs(1);
 
@@ -298,6 +344,8 @@ void audioSenderThreadProc(void* context) {
             //return;
         }
 
+        audioPacket->header.EncodedPayloadSize = encodedFrameHolder->header.size;
+
         if(!sendInputPacket(audioPacket, encodedFrameHolder)){
             Limelog("sockMic send Error!");
         }
@@ -322,6 +370,11 @@ void freePacketList(PLINKED_BLOCKING_QUEUE_ENTRY entry)
 }
 
 void destroyAudioCaptureStream(void){
+
+#ifdef RTP_DEBUG
+    DeinitPacketDebug();
+#endif
+
     if (sockMic != INVALID_SOCKET) {
         closeSocket(sockMic);
         sockMic = INVALID_SOCKET;
