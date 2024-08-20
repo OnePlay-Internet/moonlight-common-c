@@ -147,7 +147,7 @@ int initializeAudioCaptureStream(void) {
     // Set server address
     memset(&serverAddrMic, 0, sizeof(serverAddrMic));
     serverAddrMic.sin_family = AF_INET;
-    serverAddrMic.sin_port = htons(48002);
+    serverAddrMic.sin_port = htons(48002); //TODO: get for server
     serverAddrMic.sin_addr.s_addr = inet_addr(RemoteAddrString);
 
     return 0;
@@ -227,7 +227,7 @@ bool sendInputPacket(PAUDIO_PACKET_HOLDER holder, PENCODED_AUDIO_PAYLOAD_HOLDER 
     holder->data.rtp.timestamp = BE32(timestamp);
     holder->data.rtp.sequenceNumber = BE16(seqNumber);
 
-    timestamp += 320*3;//frame *3(clocked at 48khz for opus) * 2 channel of opus encoder (TBD if one channel)
+    timestamp += 160*3;//frame *3(clocked at 48khz for opus) * //2 channel of opus encoder (TBD if one channel)
     seqNumber++;
 
     memcpy_s(&holder->data.payload[0], 2000, &payload->data[0], payload->header.size );
