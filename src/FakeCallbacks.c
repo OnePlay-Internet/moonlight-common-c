@@ -32,14 +32,16 @@ static int fakeAcInit(int audioConfiguration, POPUS_ENCODER_CONFIGURATION opusCo
 static void fakeAcStart(void) {}
 static void fakeAcStop(void) {}
 static void fakeAcCleanup(void) {}
-static void* fakeAcGetEncodedMicData(int* outlen) {}
+static void fakeAcCaptureMic(void* outFrame) {}
+static void fakeAcEncode(void* inFrame,void* outEncodedSample, int* outLen){}
 
 AUDIO_CAPTURE_CALLBACKS fakeAcCallbacks = {
     .init = fakeAcInit,
     .start = fakeAcStart,
     .stop = fakeAcStop,
     .cleanup = fakeAcCleanup,
-    .getEncodedMicData = fakeAcGetEncodedMicData,
+    .captureMic = fakeAcCaptureMic,
+    .encode = fakeAcEncode,
 };
 
 static void fakeClStageStarting(int stage) {}
@@ -131,8 +133,11 @@ void fixupMissingCallbacks(PDECODER_RENDERER_CALLBACKS* drCallbacks, PAUDIO_REND
         if ((*acCallbacks)->cleanup == NULL) {
             (*acCallbacks)->cleanup = fakeAcCleanup;
         }
-        if ((*acCallbacks)->getEncodedMicData == NULL) {
-            (*acCallbacks)->getEncodedMicData = fakeAcGetEncodedMicData;
+        if((*acCallbacks)->captureMic == NULL){
+            (*acCallbacks)->captureMic = fakeAcCaptureMic;
+        }
+        if ((*acCallbacks)->encode == NULL) {
+            (*acCallbacks)->encode = fakeAcEncode;
         }
     }
 

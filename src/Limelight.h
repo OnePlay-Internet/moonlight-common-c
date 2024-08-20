@@ -377,7 +377,10 @@ typedef void(*AudioCaptureStop)(void);
 typedef void(*AudioCaptureCleanup)(void);
 
 // This callback provides Opus audio data to be decoded and played. sampleLength is in bytes.
-typedef void*(*AudioCaptureGetEncodedSample)(int* outLen);
+//typedef void*(*AudioCaptureGetEncodedSample)(int* outLen);
+typedef void(*AudioCaptureMic)(void* outSample);
+
+typedef void(*AudioCaptureEncode)(void* inFrame, int inMaxPayloadSize, void* outEncodedFrame, int* outSize);
 
 typedef void(*AudioCaptureTestPlayback)(void* data, int len);
 
@@ -386,7 +389,8 @@ typedef struct _AUDIO_CAPTURE_CALLBACKS {
     AudioCaptureStart start;
     AudioCaptureStop stop;
     AudioCaptureCleanup cleanup;
-    AudioCaptureGetEncodedSample getEncodedMicData;
+    AudioCaptureMic captureMic;
+    AudioCaptureEncode encode;
     AudioCaptureTestPlayback testPlay;
     int capabilities;
 } AUDIO_CAPTURE_CALLBACKS, *PAUDIO_CAPTURE_CALLBACKS;
