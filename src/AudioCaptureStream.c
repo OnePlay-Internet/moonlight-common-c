@@ -3,6 +3,10 @@
 #include <WinSock2.h>
 #include <opus.h>
 
+#ifdef ENABLE_AUDIO_LATENCY_MONITOR
+#include <time.h>
+#endif
+
 //TODO: add socks send function to the platform functions
 SOCKET sockMic;
 struct sockaddr_in serverAddrMic;
@@ -44,11 +48,20 @@ static uint32_t avRiKeyId;// initialization vector
 typedef struct _RAW_FRAME_HOLDER {
     LINKED_BLOCKING_QUEUE_ENTRY entry;
 
+#ifdef ENABLE_AUDIO_LATENCY_MONITOR
+    LARGE_INTEGER timeStamp;
+#endif
+
     uint16_t frame[FRAME_SAMPLE_COUNT];
 } RAW_FRAME_HOLDER, *PRAW_FRAME_HOLDER;
 
 typedef struct _ENCODED_AUDIO_PAYLOAD_HEADER {
     LINKED_BLOCKING_QUEUE_ENTRY lentry;
+
+#ifdef ENABLE_AUDIO_LATENCY_MONITOR
+    LARGE_INTEGER timeStamp;
+#endif
+
     int size;
 } ENCODED_AUDIO_PAYLOAD_HEADER, *PENCODED_AUDIO_PAYLOAD_HEADER;
 
@@ -73,8 +86,14 @@ typedef struct _AUDIO_PACKET_HOLDER{
     AUDIO_PACKET data;
 } AUDIO_PACKET_HOLDER, *PAUDIO_PACKET_HOLDER;
 
-static int timestamp = 0;
+static int rtpTimestamp = 0;
 static int seqNumber = 0;
+
+#ifdef ENABLE_AUDIO_LATENCY_MONITOR
+static LARGE_INTEGER frequency;
+static double audioLatency;
+static double avgLatency;
+#endif
 
 //#define RTP_DEBUG 1
 
@@ -109,6 +128,10 @@ int initializeAudioCaptureStream(void) {
 
 #ifdef RTP_DEBUG
     InitPacketDebug();
+#endif
+
+#ifdef ENABLE_AUDIO_LATENCY_MONITOR
+    QueryPerformanceFrequency(&frequency);
 #endif
 
     LbqInitializeLinkedBlockingQueue(&rawFrameQueue, MAX_QUEUED_AUDIO_FRAMES);
@@ -224,10 +247,10 @@ bool sendInputPacket(PAUDIO_PACKET_HOLDER holder, PENCODED_AUDIO_PAYLOAD_HOLDER 
     holder->data.rtp.header = 0x80;
     holder->data.rtp.packetType = 101;
     holder->data.rtp.ssrc = 0;
-    holder->data.rtp.timestamp = BE32(timestamp);
+    holder->data.rtp.timestamp = BE32(rtpTimestamp);
     holder->data.rtp.sequenceNumber = BE16(seqNumber);
 
-    timestamp += 160*3;//frame *3(clocked at 48khz for opus) * //2 channel of opus encoder (TBD if one channel)
+    rtpTimestamp += 160*3;//frame *3(clocked at 48khz for opus) * //2 channel of opus encoder (TBD if one channel)
     seqNumber++;
 
     memcpy_s(&holder->data.payload[0], 2000, &payload->data[0], payload->header.size );
@@ -237,6 +260,18 @@ bool sendInputPacket(PAUDIO_PACKET_HOLDER holder, PENCODED_AUDIO_PAYLOAD_HOLDER 
     }
 
     int sent_bytes = sendto(sockMic, (const char*)&holder->data, sizeof(RTP_PACKET)+payload->header.size, 0, (struct sockaddr *) &serverAddrMic, sizeof(serverAddrMic));
+
+#ifdef ENABLE_AUDIO_LATENCY_MONITOR
+    LARGE_INTEGER end;
+    QueryPerformanceCounter(&end);
+    audioLatency = (double)(end.QuadPart - payload->header.timeStamp.QuadPart) / frequency.QuadPart;
+    avgLatency += audioLatency;
+    Limelog("Audio Latency for packet number: %d is %f ms | avg latency: %f ms"
+            , seqNumber
+            , audioLatency*1000
+            , (avgLatency/seqNumber) * 1000);
+
+#endif
 
     if (sent_bytes == SOCKET_ERROR) {
         Limelog("Failed to send message: %d\n", WSAGetLastError());
@@ -273,6 +308,10 @@ void audioCaptureThreadProc(void* context){
             Limelog("Null holder in capture thread: %d", err);
             return;
         }
+
+#ifdef ENABLE_AUDIO_LATENCY_MONITOR
+        QueryPerformanceCounter(&holder->timeStamp);
+#endif
 
         AudioCaptureCallbacks.captureMic(holder->frame);
 
@@ -314,6 +353,9 @@ void audioEncodeThreadProc(void* context){
 
         encodedFrameHolder->header.size = outPayloadSize;
 
+#ifdef ENABLE_AUDIO_LATENCY_MONITOR
+        encodedFrameHolder->header.timeStamp = rawFrameHolder->timeStamp;
+#endif
         err = LbqOfferQueueItem(&encodedFrameQueue, encodedFrameHolder, &encodedFrameHolder->header.lentry);
         if (err != LBQ_SUCCESS) {
             LC_ASSERT(err == LBQ_BOUND_EXCEEDED);
