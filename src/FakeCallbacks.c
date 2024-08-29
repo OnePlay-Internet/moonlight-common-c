@@ -33,7 +33,7 @@ static void fakeAcStart(void) {}
 static void fakeAcStop(void) {}
 static void fakeAcCleanup(void) {}
 static void fakeAcCaptureMic(void* outFrame) {}
-static void fakeAcEncode(void* inFrame,void* outEncodedSample, int* outLen){}
+static void fakeAcEncode(void* inFrame, int inMaxPayloadSize, void* outEncodedFrame, int* outSize){}
 
 AUDIO_CAPTURE_CALLBACKS fakeAcCallbacks = {
     .init = fakeAcInit,

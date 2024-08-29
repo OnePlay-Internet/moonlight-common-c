@@ -28,10 +28,15 @@ static PLT_MUTEX frameQMutex;
 static PLT_MUTEX rtpQMutex;
 
 static PPLT_CRYPTO_CONTEXT audioEncryptionCtx;
+
+#define DEBUG_AUDIO_ENCRYPTION 1
+#ifdef DEBUG_AUDIO_ENCRYPTION
+static PPLT_CRYPTO_CONTEXT audioDecryptionCtx;
+#endif
+
 static bool initialized;
-static bool encryptedControlStream;
-static unsigned char currentAesIv[16];
-static uint32_t avRiKeyId;// initialization vector
+static uint32_t avRiKeyId;
+//static unsigned char currentAesIv[16];
 
 #define MAX_QUEUED_AUDIO_FRAMES 30
 
@@ -148,7 +153,15 @@ int initializeAudioCaptureStream(void) {
     PltCreateMutex(&frameQMutex);
     PltCreateMutex(&rtpQMutex);
 
+    audioEncryptionCtx = PltCreateCryptoContext();
+    memcpy(&avRiKeyId, StreamConfig.remoteInputAesIv, sizeof(avRiKeyId));
+    avRiKeyId = BE32(avRiKeyId);
 
+    //memcpy(&currentAesIv, StreamConfig.remoteInputAesIv, sizeof(currentAesIv));
+
+#ifdef DEBUG_AUDIO_ENCRYPTION
+    audioDecryptionCtx = PltCreateCryptoContext();
+#endif
 
     //-- Init Sock --
     WSADATA wsaData;
@@ -170,7 +183,7 @@ int initializeAudioCaptureStream(void) {
     // Set server address
     memset(&serverAddrMic, 0, sizeof(serverAddrMic));
     serverAddrMic.sin_family = AF_INET;
-    serverAddrMic.sin_port = htons(48002); //TODO: get for server
+    serverAddrMic.sin_port = htons(48002); //TODO: get from server
     serverAddrMic.sin_addr.s_addr = inet_addr(RemoteAddrString);
 
     return 0;
@@ -230,19 +243,59 @@ static void* allocateHolder(int extraLength, PLINKED_BLOCKING_QUEUE queue, size_
     }
 }
 
-void encodeInputData(uint16_t* packet){
+// return bytes written on success or return -1 on error
+static inline int encryptAudio(unsigned char *inData, int inDataLen,
+                                unsigned char *outEncryptedData, int *outEncryptedDataLen) {
+    int riKeyId;
+    unsigned char iv[16] = { 0 };
+    uint32_t ivSeq = BE32(avRiKeyId + seqNumber);
+    memcpy(iv, &ivSeq, sizeof(ivSeq));
+
+    int ret = 0;
+    unsigned char paddedData[ROUND_TO_PKCS7_PADDED_LEN(MAX_PAYLOAD_SIZE)];
+
+    memcpy(paddedData, inData, inDataLen);
+
+    ret = PltEncryptMessage(
+               audioEncryptionCtx, ALGORITHM_AES_CBC, CIPHER_FLAG_RESET_IV | CIPHER_FLAG_FINISH,
+               (unsigned char *)StreamConfig.remoteInputAesKey,
+               sizeof(StreamConfig.remoteInputAesKey), iv,
+               sizeof(iv), NULL, 0, paddedData, inDataLen,
+               outEncryptedData, outEncryptedDataLen)
+               ? 0
+               : -1;
 
 
+#ifdef DEBUG_AUDIO_ENCRYPTION
+    unsigned char decryptedAudio[ROUND_TO_PKCS7_PADDED_LEN(MAX_PAYLOAD_SIZE)];
+    int32_t decryptedLen;
+
+    PltDecryptMessage(audioDecryptionCtx, ALGORITHM_AES_CBC,
+                      CIPHER_FLAG_RESET_IV | CIPHER_FLAG_FINISH,
+                      (unsigned char *)StreamConfig.remoteInputAesKey,
+                      sizeof(StreamConfig.remoteInputAesKey), iv,
+                      sizeof(iv), NULL, 0, outEncryptedData,
+                      *outEncryptedDataLen, decryptedAudio, &decryptedLen);
+
+    if(decryptedLen != inDataLen)
+    {
+        Limelog("Mic Decryption Error: Decrypted audio size mismatch.");
+    }
+
+    for(int i = 0; i < inDataLen; i++)
+    {
+        if(paddedData[i] != decryptedAudio[i])
+        {
+            Limelog("Mic Decryption test Failed");
+        }
+    }
+
+#endif
+
+    return ret;
 }
 
-int encryptData(unsigned char* plaintext, int plaintextLen,
-                       unsigned char* ciphertext, int* ciphertextLen){
-
-    return 0;
-}
-
-
-bool sendInputPacket(PAUDIO_PACKET_HOLDER holder, PENCODED_AUDIO_PAYLOAD_HOLDER payload){
+bool sendRtpMicPacket(PAUDIO_PACKET_HOLDER holder, PENCODED_AUDIO_PAYLOAD_HOLDER payload){
 
     holder->data.rtp.header = 0x80;
     holder->data.rtp.packetType = 101;
@@ -250,16 +303,35 @@ bool sendInputPacket(PAUDIO_PACKET_HOLDER holder, PENCODED_AUDIO_PAYLOAD_HOLDER 
     holder->data.rtp.timestamp = BE32(rtpTimestamp);
     holder->data.rtp.sequenceNumber = BE16(seqNumber);
 
-    rtpTimestamp += 160*3;//frame *3(clocked at 48khz for opus) * //2 channel of opus encoder (TBD if one channel)
-    seqNumber++;
+    Limelog("Sequence Number: %d", seqNumber);
+    Limelog("Encoded data Size: %d", payload->header.size);
+
+#ifndef DISABLE_MIC_ENCRYPTION
+        // TODO: encrypt based on conf file
+    int err = encryptAudio( (unsigned char *)(&payload->data[0])
+                       , payload->header.size
+                       , (unsigned char *)(&payload->data[0])
+                       , &payload->header.size);
+
+    if(err == -1)
+    {
+        Limelog("Mic Audio Encryption Failed : %d", err);
+    }
+#endif
 
     memcpy_s(&holder->data.payload[0], 2000, &payload->data[0], payload->header.size );
 
-    if(seqNumber % 200 == 0){
-        Limelog("Encode Len: %d", payload->header.size);
-    }
+    //if(seqNumber % 200 == 0){
+        Limelog("Encrypted Len: %d", payload->header.size);
+    //}
 
-    int sent_bytes = sendto(sockMic, (const char*)&holder->data, sizeof(RTP_PACKET)+payload->header.size, 0, (struct sockaddr *) &serverAddrMic, sizeof(serverAddrMic));
+    int sent_bytes = sendto(sockMic
+                            , (const char*)&holder->data
+                            , sizeof(RTP_PACKET)+payload->header.size
+                            , 0
+                            , (struct sockaddr *) &serverAddrMic
+                            , sizeof(serverAddrMic)
+                            );
 
 #ifdef ENABLE_AUDIO_LATENCY_MONITOR
     LARGE_INTEGER end;
@@ -292,7 +364,9 @@ bool sendInputPacket(PAUDIO_PACKET_HOLDER holder, PENCODED_AUDIO_PAYLOAD_HOLDER 
     }
 #endif
 
-    //PltSleepMs(1);
+    //frame *3(clocked at 48khz for opus) * //2 channel of opus encoder (TBD if one channel)
+    rtpTimestamp += 160*3;
+    seqNumber++;
 
     return true;
 }
@@ -301,7 +375,7 @@ void audioCaptureThreadProc(void* context){
     int err = 0;
     PRAW_FRAME_HOLDER holder;
 
-    while (!PltIsThreadInterrupted(&senderThread))
+    while (!PltIsThreadInterrupted(&captureThread))
     {
         holder = allocateHolder(0, &rawFreeFrameList, sizeof(RAW_FRAME_HOLDER));
         if(holder == NULL){
@@ -388,7 +462,7 @@ void audioSenderThreadProc(void* context) {
 
         audioPacket->header.EncodedPayloadSize = encodedFrameHolder->header.size;
 
-        if(!sendInputPacket(audioPacket, encodedFrameHolder)){
+        if(!sendRtpMicPacket(audioPacket, encodedFrameHolder)){
             Limelog("sockMic send Error!");
         }
 
@@ -433,6 +507,12 @@ void destroyAudioCaptureStream(void){
 
     // RtpaCleanupQueue(&rtpAudioQueue);
 
+    PltDestroyCryptoContext(audioEncryptionCtx);
+
+#ifdef DEBUG_AUDIO_ENCRYPTION
+    PltDestroyCryptoContext(audioDecryptionCtx);
+#endif
+
     PltDeleteMutex(&frameQMutex);
     PltDeleteMutex(&rtpQMutex);
 }
@@ -468,7 +548,7 @@ int startAudioCaptureStream(void* audioCaptureContext, int arFlags)
         PltJoinThread(&captureThread);
         PltCloseThread(&captureThread);
         closeSocket(sockMic);
-        AudioCallbacks.cleanup();
+        AudioCaptureCallbacks.cleanup();
         return err;
     }
 
@@ -483,7 +563,7 @@ int startAudioCaptureStream(void* audioCaptureContext, int arFlags)
         PltJoinThread(&encoderThread);
         PltCloseThread(&encoderThread);
         closeSocket(sockMic);
-        AudioCallbacks.cleanup();
+        AudioCaptureCallbacks.cleanup();
         return err;
     }
     return 0;
@@ -494,21 +574,25 @@ void stopAudioCaptureStream(void)
     AudioCaptureCallbacks.stop();
 
     PltInterruptThread(&senderThread);
-    if ((AudioCallbacks.capabilities & CAPABILITY_DIRECT_SUBMIT) == 0) {
+    if ((AudioCaptureCallbacks.capabilities & CAPABILITY_DIRECT_SUBMIT) == 0) {
         // Signal threads waiting on the LBQ
         //TODO: Capabilities setup base on thread count
+        LbqSignalQueueShutdown(&rawFrameQueue);
         LbqSignalQueueShutdown(&encodedFrameQueue);
         LbqSignalQueueShutdown(&rtpPacketQueue);
+        PltInterruptThread(&captureThread);
         PltInterruptThread(&encoderThread);
     }
 
     PltJoinThread(&senderThread);
-    if ((AudioCallbacks.capabilities & CAPABILITY_DIRECT_SUBMIT) == 0) {
+    if ((AudioCaptureCallbacks.capabilities & CAPABILITY_DIRECT_SUBMIT) == 0) {
+        PltJoinThread(&captureThread);
         PltJoinThread(&encoderThread);
     }
 
     PltCloseThread(&senderThread);
-    if ((AudioCallbacks.capabilities & CAPABILITY_DIRECT_SUBMIT) == 0) {
+    if ((AudioCaptureCallbacks.capabilities & CAPABILITY_DIRECT_SUBMIT) == 0) {
+        PltCloseThread(&captureThread);
         PltCloseThread(&encoderThread);
     }
 

@@ -549,7 +549,10 @@ int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION stre
     if (err != 0) {
         Limelog("Audio Capture stream start failed: %d\n", err);
         ListenerCallbacks.stageFailed(STAGE_AUDIO_CAPTURE_STREAM_START, err);
-        goto Cleanup;
+        //goto Cleanup;
+        // TODO: if mic is not present then disable mic streaming for now
+        // TODO: user should be able to select mic/change mic on runtime.
+        // TODO: Mic device object should be created at the start of session
     }
     stage++;
     LC_ASSERT(stage == STAGE_AUDIO_CAPTURE_STREAM_START);
