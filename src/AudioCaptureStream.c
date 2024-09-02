@@ -18,18 +18,12 @@ static LINKED_BLOCKING_QUEUE encodedFreeFrameList;
 static LINKED_BLOCKING_QUEUE rtpPacketQueue;
 static LINKED_BLOCKING_QUEUE rtpFreePacketList;
 
-//TODO: setup rtp_queue for FEC and encryption
-//static RTP_AUDIO_QUEUE rtpAudioQueue;// the rtppackets will be queued here by encoder thread for sender thread
-
 static PLT_THREAD senderThread;
 static PLT_THREAD encoderThread;
 static PLT_THREAD captureThread;
-static PLT_MUTEX frameQMutex;
-static PLT_MUTEX rtpQMutex;
 
 static PPLT_CRYPTO_CONTEXT audioEncryptionCtx;
 
-#define DEBUG_AUDIO_ENCRYPTION 1
 #ifdef DEBUG_AUDIO_ENCRYPTION
 static PPLT_CRYPTO_CONTEXT audioDecryptionCtx;
 #endif
@@ -42,13 +36,12 @@ static uint32_t avRiKeyId;
 
 #define RTP_SEND_BUFFER (64 * 1024)//TBD size in frames
 
-#define AUDIO_CAPTURE_FRAME_DURATION 10
+#define AUDIO_CAPTURE_FRAME_DURATION 5
 
-#define FRAME_DURATION 10//ms
 #define BITRATE_MS_126 15750/1000
-#define MAX_PAYLOAD_SIZE BITRATE_MS_126 * FRAME_DURATION
+#define MAX_PAYLOAD_SIZE BITRATE_MS_126 * AUDIO_CAPTURE_FRAME_DURATION
 
-#define FRAME_SAMPLE_COUNT FRAME_DURATION * 16
+#define FRAME_SAMPLE_COUNT AUDIO_CAPTURE_FRAME_DURATION * 16
 
 typedef struct _RAW_FRAME_HOLDER {
     LINKED_BLOCKING_QUEUE_ENTRY entry;
@@ -78,7 +71,7 @@ typedef struct _ENCODED_AUDIO_PAYLOAD {
 //TODO: use modified RTPQueue instead for better use with FEC
 typedef struct _AUDIO_PACKET {
     RTP_PACKET rtp;
-    uint16_t payload[MAX_PAYLOAD_SIZE];
+    uint16_t payload[MAX_PAYLOAD_SIZE];//TODO: shouldn't this be bytes
 } AUDIO_PACKET, *PAUDIO_PACKET;
 
 typedef struct _AUDIO_PACKET_HOLDER_HEADER{
@@ -91,8 +84,29 @@ typedef struct _AUDIO_PACKET_HOLDER{
     AUDIO_PACKET data;
 } AUDIO_PACKET_HOLDER, *PAUDIO_PACKET_HOLDER;
 
-static int rtpTimestamp = 0;
-static int seqNumber = 0;
+//TODO: keep them in the holder header
+static uint32_t rtpTimestamp = 0;
+static uint16_t seqNumber = 0;
+static bool isMicToggled = false;
+
+// *********FEC related*********
+
+#define MAX_BLOCK_SIZE ROUND_TO_PKCS7_PADDED_LEN(2048)
+
+typedef struct _AUDIO_FEC_PACKET {
+  RTP_PACKET rtp;
+  AUDIO_FEC_HEADER fecHeader;
+  uint8_t payload[MAX_BLOCK_SIZE];
+} AUDIO_FEC_PACKET, *PAUDIO_FEC_PACKET;
+
+static uint8_t* shards;
+static uint8_t* shards_p[RTPA_TOTAL_SHARDS];
+static PAUDIO_FEC_PACKET fec_packet;
+static int audioQosType;// TODO: manage QOS
+
+static reed_solomon* rs;
+
+// *********FEC related End*********
 
 #ifdef ENABLE_AUDIO_LATENCY_MONITOR
 static LARGE_INTEGER frequency;
@@ -148,16 +162,34 @@ int initializeAudioCaptureStream(void) {
     LbqInitializeLinkedBlockingQueue(&rtpPacketQueue, MAX_QUEUED_AUDIO_FRAMES);
     LbqInitializeLinkedBlockingQueue(&rtpFreePacketList, MAX_QUEUED_AUDIO_FRAMES);
 
-    //RtpaInitializeQueue(&rtpAudioQueue);
-
-    PltCreateMutex(&frameQMutex);
-    PltCreateMutex(&rtpQMutex);
-
+    //Encryption
     audioEncryptionCtx = PltCreateCryptoContext();
     memcpy(&avRiKeyId, StreamConfig.remoteInputAesIv, sizeof(avRiKeyId));
     avRiKeyId = BE32(avRiKeyId);
 
-    //memcpy(&currentAesIv, StreamConfig.remoteInputAesIv, sizeof(currentAesIv));
+    // FEC related
+    rs = reed_solomon_new(RTPA_DATA_SHARDS, RTPA_FEC_SHARDS);
+    fec_packet = malloc(sizeof(AUDIO_FEC_PACKET));
+    if (shards == NULL) {
+        Limelog("FEC PACKET: malloc() failed\n");
+    }
+
+    fec_packet->rtp.header = 0x80;
+    fec_packet->rtp.packetType = 127;
+    fec_packet->rtp.timestamp = 0;
+    fec_packet->rtp.ssrc = 0;
+    fec_packet->fecHeader.payloadType = 101;
+    fec_packet->fecHeader.ssrc = 0;
+
+    shards = malloc(RTPA_TOTAL_SHARDS * MAX_BLOCK_SIZE);
+    if (shards == NULL) {
+        Limelog("FEC Shards: malloc() failed\n");
+    }
+
+    for (int x = 0; x < RTPA_TOTAL_SHARDS; ++x) {
+        shards_p[x] = (uint8_t *) &shards[x * MAX_BLOCK_SIZE];
+    }
+
 
 #ifdef DEBUG_AUDIO_ENCRYPTION
     audioDecryptionCtx = PltCreateCryptoContext();
@@ -246,7 +278,6 @@ static void* allocateHolder(int extraLength, PLINKED_BLOCKING_QUEUE queue, size_
 // return bytes written on success or return -1 on error
 static inline int encryptAudio(unsigned char *inData, int inDataLen,
                                 unsigned char *outEncryptedData, int *outEncryptedDataLen) {
-    int riKeyId;
     unsigned char iv[16] = { 0 };
     uint32_t ivSeq = BE32(avRiKeyId + seqNumber);
     memcpy(iv, &ivSeq, sizeof(ivSeq));
@@ -297,41 +328,54 @@ static inline int encryptAudio(unsigned char *inData, int inDataLen,
 
 bool sendRtpMicPacket(PAUDIO_PACKET_HOLDER holder, PENCODED_AUDIO_PAYLOAD_HOLDER payload){
 
+    int sentBytes = 0;
+
     holder->data.rtp.header = 0x80;
     holder->data.rtp.packetType = 101;
     holder->data.rtp.ssrc = 0;
     holder->data.rtp.timestamp = BE32(rtpTimestamp);
     holder->data.rtp.sequenceNumber = BE16(seqNumber);
 
+#ifdef MIC_DEBUG
     Limelog("Sequence Number: %d", seqNumber);
     Limelog("Encoded data Size: %d", payload->header.size);
+#endif
 
 #ifndef DISABLE_MIC_ENCRYPTION
-        // TODO: encrypt based on conf file
-    int err = encryptAudio( (unsigned char *)(&payload->data[0])
-                       , payload->header.size
-                       , (unsigned char *)(&payload->data[0])
-                       , &payload->header.size);
 
-    if(err == -1)
+    if(AudioEncryptionEnabled)
     {
+      // TODO: encrypt based on conf file
+      int err = encryptAudio(
+          (unsigned char *)(&payload->data[0]), payload->header.size,
+          (unsigned char *)(&payload->data[0]), &payload->header.size);
+
+      if (err == -1) {
         Limelog("Mic Audio Encryption Failed : %d", err);
+      }
     }
 #endif
 
     memcpy_s(&holder->data.payload[0], 2000, &payload->data[0], payload->header.size );
 
-    //if(seqNumber % 200 == 0){
-        Limelog("Encrypted Len: %d", payload->header.size);
-    //}
-
-    int sent_bytes = sendto(sockMic
+#ifdef FEC_DEBUG_DROP_CHECK
+    if ((/*seqNumber % 2 == 0 ||*/ seqNumber % 3 == 0) && seqNumber % 10 != 0) {
+      Limelog("FEC_DEBUG_DROP_CHECK: Dropping :: %d", seqNumber);
+    } else {
+      sentBytes =
+          sendto(sockMic, (const char *)&holder->data,
+                 sizeof(RTP_PACKET) + payload->header.size, 0,
+                 (struct sockaddr *)&serverAddrMic, sizeof(serverAddrMic));
+    }
+#else
+    sentBytes = sendto(sockMic
                             , (const char*)&holder->data
                             , sizeof(RTP_PACKET)+payload->header.size
                             , 0
                             , (struct sockaddr *) &serverAddrMic
                             , sizeof(serverAddrMic)
                             );
+#endif
 
 #ifdef ENABLE_AUDIO_LATENCY_MONITOR
     LARGE_INTEGER end;
@@ -345,7 +389,7 @@ bool sendRtpMicPacket(PAUDIO_PACKET_HOLDER holder, PENCODED_AUDIO_PAYLOAD_HOLDER
 
 #endif
 
-    if (sent_bytes == SOCKET_ERROR) {
+    if (sentBytes == SOCKET_ERROR) {
         Limelog("Failed to send message: %d\n", WSAGetLastError());
         closesocket(sockMic);
         WSACleanup();
@@ -364,36 +408,120 @@ bool sendRtpMicPacket(PAUDIO_PACKET_HOLDER holder, PENCODED_AUDIO_PAYLOAD_HOLDER
     }
 #endif
 
-    //frame *3(clocked at 48khz for opus) * //2 channel of opus encoder (TBD if one channel)
-    rtpTimestamp += 160*3;
+    memcpy_s(&holder->data.payload[0], MAX_PAYLOAD_SIZE, shards_p[seqNumber % RTPA_DATA_SHARDS], payload->header.size);
+
+    if (seqNumber % RTPA_DATA_SHARDS == 0) {
+        fec_packet->fecHeader.baseSequenceNumber = BE16(seqNumber);
+        fec_packet->fecHeader.baseTimestamp = BE32(rtpTimestamp);
+    }
+
+    if ((seqNumber + 1) % RTPA_DATA_SHARDS == 0) {
+        // TODO: check what will happen when the blocksize are different like 32 and 16
+        reed_solomon_encode(rs, shards_p, RTPA_TOTAL_SHARDS, payload->header.size);
+
+        for (int x = 0; x < RTPA_FEC_SHARDS; ++x) {
+            fec_packet->rtp.sequenceNumber = (seqNumber + x + 1);
+            fec_packet->fecHeader.fecShardIndex = x;
+            memcpy(&fec_packet->payload[0], shards_p[RTPA_DATA_SHARDS + x], payload->header.size);
+
+            //FEC
+#ifdef FEC_DEBUG_FECDROP_CHECK
+// Randomly introduce drops in the packets and check if they are correctly
+// detected and corrected at sunshine side.
+
+            if(fec_packet->fecHeader.fecShardIndex == 0){
+                Limelog("FEC_DEBUG: Dropping fec packet itself at seqNumber: %d | IndexNumber %d", seqNumber);
+            }
+            else{
+                sentBytes = sendto(sockMic
+                                   , (const char*)fec_packet
+                                   , sizeof(AUDIO_FEC_PACKET)+payload->header.size - MAX_BLOCK_SIZE
+                                   , 0
+                                   , (struct sockaddr *) &serverAddrMic
+                                   , sizeof(serverAddrMic)
+                                   );
+            }
+#else
+
+            sentBytes = sendto(sockMic
+                                    , (const char*)fec_packet
+                                    , sizeof(AUDIO_FEC_PACKET)+payload->header.size - MAX_BLOCK_SIZE
+                                    , 0
+                                    , (struct sockaddr *) &serverAddrMic
+                                    , sizeof(serverAddrMic)
+                                    );
+#endif
+
+#ifdef FEC_DEBUG
+            //}
+            Limelog("Audio FEC [%d] :: %d :: send...", (seqNumber & ~(RTPA_DATA_SHARDS - 1)) ,x );
+            Limelog("Audio Packet type:: %d | FEC Type:: %d", fec_packet->rtp.packetType, fec_packet->fecHeader.payloadType );
+#endif
+
+            if (sentBytes == SOCKET_ERROR) {
+                Limelog("Failed to send FEC: %d\n", WSAGetLastError());
+                closesocket(sockMic);
+                WSACleanup();
+                return false;
+            }
+        }
+    }
+
+    //frame *3(clocked at 48khz for opus)
+    rtpTimestamp += 80*3; // 80 = 16000/1000 * Frame Duration(5) TODO: dont hardcode
     seqNumber++;
 
     return true;
 }
 
+void freePacketList(PLINKED_BLOCKING_QUEUE_ENTRY entry)
+{
+    PLINKED_BLOCKING_QUEUE_ENTRY nextEntry;
+
+    while (entry != NULL) {
+        nextEntry = entry->flink;
+
+        // The entry is stored within the data allocation
+        free(entry->data);
+
+        entry = nextEntry;
+    }
+}
 void audioCaptureThreadProc(void* context){
     int err = 0;
     PRAW_FRAME_HOLDER holder;
+    isMicToggled = false;
 
     while (!PltIsThreadInterrupted(&captureThread))
     {
-        holder = allocateHolder(0, &rawFreeFrameList, sizeof(RAW_FRAME_HOLDER));
-        if(holder == NULL){
-            Limelog("Null holder in capture thread: %d", err);
-            return;
+        bool isMicMuted = AudioCaptureCallbacks.isMuted();
+        if(isMicMuted)
+        {
+            PltSleepMs(1500);
+            continue;
         }
+        else{
+            holder = allocateHolder(0, &rawFreeFrameList, sizeof(RAW_FRAME_HOLDER));
+            if(holder == NULL){
+                Limelog("Null holder in capture thread: %d", err);
+                return;
+            }
 
 #ifdef ENABLE_AUDIO_LATENCY_MONITOR
-        QueryPerformanceCounter(&holder->timeStamp);
+            QueryPerformanceCounter(&holder->timeStamp);
 #endif
+            if(AudioCaptureCallbacks.captureMic(holder->frame)){
+                err = LbqOfferQueueItem(&rawFrameQueue, holder, &holder->entry);
 
-        AudioCaptureCallbacks.captureMic(holder->frame);
-
-        err = LbqOfferQueueItem(&rawFrameQueue, holder, &holder->entry);
-        if (err != LBQ_SUCCESS) {
-            LC_ASSERT(err == LBQ_BOUND_EXCEEDED);
-            Limelog("Input queue reached maximum size limit\n");
-            freeRawFrameHolder(holder);
+                if (err != LBQ_SUCCESS) {
+                    if(err == LBQ_BOUND_EXCEEDED){
+                        Limelog("Mic capture queue reached maximum size limit\n");
+                        // The packet queue is full, so free all existing items
+                        freePacketList(LbqFlushQueueItems(&rawFrameQueue));
+                    }
+                    freeRawFrameHolder(holder);
+                }
+            }
         }
     }
 }
@@ -406,6 +534,12 @@ void audioEncodeThreadProc(void* context){
 
     while(!PltIsThreadInterrupted(&encoderThread))
     {
+        if(AudioCaptureCallbacks.isMuted())
+        {
+            PltSleepMs(1500);
+            continue;
+        }
+
         err = LbqWaitForQueueElement(&rawFrameQueue, (void**)&rawFrameHolder);
         if (err != LBQ_SUCCESS) {
             Limelog("Queue Error in Audio Encode Thread: %d", err);
@@ -433,7 +567,7 @@ void audioEncodeThreadProc(void* context){
         err = LbqOfferQueueItem(&encodedFrameQueue, encodedFrameHolder, &encodedFrameHolder->header.lentry);
         if (err != LBQ_SUCCESS) {
             LC_ASSERT(err == LBQ_BOUND_EXCEEDED);
-            Limelog("Input queue reached maximum size limit\n");
+            Limelog("Mic encode queue reached maximum size limit\n");
             freeEncodeFrameHolder(encodedFrameHolder);
         }
 
@@ -448,6 +582,14 @@ void audioSenderThreadProc(void* context) {
     PAUDIO_PACKET_HOLDER audioPacket;
 
     while(!PltIsThreadInterrupted(&senderThread)){
+
+        if(AudioCaptureCallbacks.isMuted())
+        {
+            // Better to sleep the thread rather than recreating it.
+            PltSleepMs(1500);
+            continue;
+        }
+
         err = LbqWaitForQueueElement(&encodedFrameQueue, (void**)&encodedFrameHolder);
         if (err != LBQ_SUCCESS) {
             Limelog("Queue Error in Audio Sender Thread: %d", err);
@@ -469,21 +611,19 @@ void audioSenderThreadProc(void* context) {
         freeEncodeFrameHolder(encodedFrameHolder);
         freePacketHolder(audioPacket);
     }
-}
 
-void freePacketList(PLINKED_BLOCKING_QUEUE_ENTRY entry)
-{
-    PLINKED_BLOCKING_QUEUE_ENTRY nextEntry;
+    if(fec_packet != NULL)
+    {
+        free(fec_packet);
+    }
 
-    while (entry != NULL) {
-        nextEntry = entry->flink;
-
-        // The entry is stored within the data allocation
-        free(entry->data);
-
-        entry = nextEntry;
+    if(shards != NULL)
+    {
+        free(shards);
     }
 }
+
+
 
 void destroyAudioCaptureStream(void){
 
@@ -505,16 +645,11 @@ void destroyAudioCaptureStream(void){
     freePacketList(LbqDestroyLinkedBlockingQueue(&rtpPacketQueue));
     freePacketList(LbqDestroyLinkedBlockingQueue(&rtpFreePacketList));
 
-    // RtpaCleanupQueue(&rtpAudioQueue);
-
     PltDestroyCryptoContext(audioEncryptionCtx);
 
 #ifdef DEBUG_AUDIO_ENCRYPTION
     PltDestroyCryptoContext(audioDecryptionCtx);
 #endif
-
-    PltDeleteMutex(&frameQMutex);
-    PltDeleteMutex(&rtpQMutex);
 }
 
 int startAudioCaptureStream(void* audioCaptureContext, int arFlags)
@@ -613,6 +748,16 @@ void stopAudioCaptureStream(void)
     LbqSignalQueueDrain(&rtpFreePacketList);
 }
 
+int LiSendMicToggleEvent(bool isMuted){
+    char* data = isMuted? "Muted" : "Not Muted";
+
+    if(sendMicStatusPacketOnControlStream((unsigned char*)data, strlen(data)) == -1)
+    {
+        Limelog("Error sending Mic Status on Control Stream.");
+    }
+
+    return 0;
+}
 // int LiGetPendingAudioFrames(void){}
 
 // int LiGetPendingAudioDuration(void){}

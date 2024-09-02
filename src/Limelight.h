@@ -378,11 +378,13 @@ typedef void(*AudioCaptureCleanup)(void);
 
 // This callback provides Opus audio data to be decoded and played. sampleLength is in bytes.
 //typedef void*(*AudioCaptureGetEncodedSample)(int* outLen);
-typedef void(*AudioCaptureMic)(void* outSample);
+typedef bool(*AudioCaptureMic)(void* outSample);
 
 typedef void(*AudioCaptureEncode)(void* inFrame, int inMaxPayloadSize, void* outEncodedFrame, int* outSize);
 
 typedef void(*AudioCaptureTestPlayback)(void* data, int len);
+
+typedef bool(*AudioCaptureIsMuted)(void);
 
 typedef struct _AUDIO_CAPTURE_CALLBACKS {
     AudioCaptureInit init;
@@ -392,6 +394,7 @@ typedef struct _AUDIO_CAPTURE_CALLBACKS {
     AudioCaptureMic captureMic;
     AudioCaptureEncode encode;
     AudioCaptureTestPlayback testPlay;
+    AudioCaptureIsMuted isMuted;
     int capabilities;
 } AUDIO_CAPTURE_CALLBACKS, *PAUDIO_CAPTURE_CALLBACKS;
 
@@ -860,6 +863,8 @@ int LiSendHighResScrollEvent(short scrollAmount);
 // This is a Sunshine protocol extension.
 int LiSendHScrollEvent(signed char scrollClicks);
 int LiSendHighResHScrollEvent(short scrollAmount);
+
+int LiSendMicToggleEvent(bool isMuted);
 
 // This function returns a time in milliseconds with an implementation-defined epoch.
 uint64_t LiGetMillis(void);

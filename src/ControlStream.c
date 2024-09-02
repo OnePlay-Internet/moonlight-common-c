@@ -118,6 +118,7 @@ static PPLT_CRYPTO_CONTEXT decryptionCtx;
 #define IDX_RUMBLE_TRIGGER_DATA 9
 #define IDX_SET_MOTION_EVENT 10
 #define IDX_SET_RGB_LED 11
+#define IDX_TOGGLE_MIC 12
 
 #define CONTROL_STREAM_TIMEOUT_SEC 10
 #define CONTROL_STREAM_LINGER_TIMEOUT_SEC 2
@@ -177,6 +178,7 @@ static const short packetTypesGen7[] = {
     -1,     // Rumble triggers (unused)
     -1,     // Set motion event (unused)
     -1,     // Set RGB LED (unused)
+    0x0108, // Mic Toggle
 };
 static const short packetTypesGen7Enc[] = {
     0x0302, // Request IDR frame
@@ -191,6 +193,7 @@ static const short packetTypesGen7Enc[] = {
     0x5500, // Rumble triggers (Sunshine protocol extension)
     0x5501, // Set motion event (Sunshine protocol extension)
     0x5502, // Set RGB LED (Sunshine protocol extension)
+    0x0108, // Mic Toggle
 };
 
 static const char requestIdrFrameGen3[] = { 0, 0 };
@@ -631,12 +634,20 @@ static bool sendMessageEnet(short ptype, short paylen, const void* payload, uint
         encPacket->length = sizeof(encPacket->seq) + AES_GCM_TAG_LENGTH + sizeof(*packet) + paylen;
         encPacket->seq = currentEnetSequenceNumber++;
 
+        if(ptype == packetTypes[IDX_TOGGLE_MIC])
+        {
+            Limelog("Encrypted -> len:: %d | SeqNumber :: %d", encPacket->length, encPacket->seq );
+        }
         // Construct the plaintext data for encryption
         LC_ASSERT(sizeof(*packet) + paylen < sizeof(tempBuffer));
         packet = (PNVCTL_ENET_PACKET_HEADER_V2)tempBuffer;
         packet->type = ptype;
         packet->payloadLength = paylen;
         memcpy(&packet[1], payload, paylen);
+
+        if (ptype == packetTypes[IDX_TOGGLE_MIC]) {
+            Limelog("packet -> len:: %d ", packet->payloadLength);
+        }
 
         // Encrypt the data into the final packet (and byteswap for BE machines)
         if (!encryptControlMessage(encPacket, packet)) {
@@ -1538,6 +1549,17 @@ int sendInputPacketOnControlStream(unsigned char* data, int length, uint8_t chan
 
     // Send the input data (no reply expected)
     if (sendMessageAndForget(packetTypes[IDX_INPUT_DATA], length, data, channelId, flags, moreData) == 0) {
+        return -1;
+    }
+
+    return 0;
+}
+
+int sendMicStatusPacketOnControlStream(unsigned char* data, int length){
+
+    Limelog("len of the mic send %d", length);
+    if(sendMessageAndForget(packetTypes[IDX_TOGGLE_MIC], length, data, CTRL_CHANNEL_UTF8, ENET_PACKET_FLAG_RELIABLE, false) == 0)
+    {
         return -1;
     }
 
