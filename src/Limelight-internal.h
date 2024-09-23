@@ -23,6 +23,7 @@ extern STREAM_CONFIGURATION StreamConfig;
 extern CONNECTION_LISTENER_CALLBACKS ListenerCallbacks;
 extern DECODER_RENDERER_CALLBACKS VideoCallbacks;
 extern AUDIO_RENDERER_CALLBACKS AudioCallbacks;
+extern AUDIO_CAPTURE_CALLBACKS AudioCaptureCallbacks;
 extern int NegotiatedVideoFormat;
 extern volatile bool ConnectionInterrupted;
 extern bool HighQualitySurroundSupported;
@@ -36,6 +37,7 @@ extern bool ReferenceFrameInvalidationSupported;
 extern uint16_t RtspPortNumber;
 extern uint16_t ControlPortNumber;
 extern uint16_t AudioPortNumber;
+extern uint16_t MicPortNumber;
 extern uint16_t VideoPortNumber;
 
 extern SS_PING AudioPingPayload;
@@ -123,7 +125,7 @@ bool isReferenceFrameInvalidationEnabled(void);
 void* extendBuffer(void* ptr, size_t newSize);
 
 void fixupMissingCallbacks(PDECODER_RENDERER_CALLBACKS* drCallbacks, PAUDIO_RENDERER_CALLBACKS* arCallbacks,
-    PCONNECTION_LISTENER_CALLBACKS* clCallbacks);
+    PAUDIO_CAPTURE_CALLBACKS* acCallbacks, PCONNECTION_LISTENER_CALLBACKS* clCallbacks);
 void setRecorderCallbacks(PDECODER_RENDERER_CALLBACKS drCallbacks, PAUDIO_RENDERER_CALLBACKS arCallbacks);
 
 char* getSdpPayloadForStreamConfig(int rtspClientVersion, int* length);
@@ -137,6 +139,7 @@ void connectionReceivedCompleteFrame(uint32_t frameIndex);
 void connectionSawFrame(uint32_t frameIndex);
 void connectionSendFrameFecStatus(PSS_FRAME_FEC_STATUS fecStatus);
 int sendInputPacketOnControlStream(unsigned char* data, int length, uint8_t channelId, uint32_t flags, bool moreData);
+int sendMicStatusPacketOnControlStream(unsigned char* data, int lenght);
 void flushInputOnControlStream(void);
 bool isControlDataInTransit(void);
 
@@ -160,6 +163,12 @@ int notifyAudioPortNegotiationComplete(void);
 void destroyAudioStream(void);
 int startAudioStream(void* audioContext, int arFlags);
 void stopAudioStream(void);
+
+int initializeAudioCaptureStream(void);
+int notifyAudioCapturePortNegotiationComplete(void);
+void destroyAudioCaptureStream(void);
+int startAudioCaptureStream(void* audioCaptureContext, int arFlags);
+void stopAudioCaptureStream(void);
 
 int initializeInputStream(void);
 void destroyInputStream(void);

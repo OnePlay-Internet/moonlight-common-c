@@ -178,6 +178,8 @@ bool isSocketReadable(SOCKET s) {
     return true;
 }
 
+//TODO: sendUDPSocket
+
 int recvUdpSocket(SOCKET s, char* buffer, int size, bool useSelect) {
     int err;
 

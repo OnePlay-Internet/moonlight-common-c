@@ -1201,6 +1201,9 @@ int performRtspHandshake(PSERVER_INFORMATION serverInfo, PORT_DETAILS ports) {
         // which is not the case for the video stream.
         notifyAudioPortNegotiationComplete();
 
+        //
+        notifyAudioCapturePortNegotiationComplete();
+
         sessionId = getOptionContent(response.options, "Session");
 
         if (sessionId == NULL) {

@@ -339,6 +339,13 @@ typedef struct _OPUS_MULTISTREAM_CONFIGURATION {
     unsigned char mapping[AUDIO_CONFIGURATION_MAX_CHANNEL_COUNT];
 } OPUS_MULTISTREAM_CONFIGURATION, *POPUS_MULTISTREAM_CONFIGURATION;
 
+typedef struct _OPUS_ENCODER_CONFIGURATION {
+    int sampleRate;
+    int channelCount;
+    int Application;
+    int samplesPerFrame;
+} OPUS_ENCODER_CONFIGURATION, *POPUS_ENCODER_CONFIGURATION;
+
 // This callback initializes the audio renderer. The audio configuration parameter
 // provides the negotiated audio configuration. This may differ from the one
 // specified in the stream configuration. Returns 0 on success, non-zero on failure.
@@ -368,21 +375,62 @@ typedef struct _AUDIO_RENDERER_CALLBACKS {
 // Use this function to zero the audio callbacks when allocated on the stack or heap
 void LiInitializeAudioCallbacks(PAUDIO_RENDERER_CALLBACKS arCallbacks);
 
+// This callback initializes the audio renderer. The audio configuration parameter
+// provides the negotiated audio configuration. This may differ from the one
+// specified in the stream configuration. Returns 0 on success, non-zero on failure.
+typedef int(*AudioCaptureInit)(int audioConfiguration, const POPUS_ENCODER_CONFIGURATION opusConfig, void* context, int arFlags);
+
+// This callback notifies the decoder that the stream is starting. No audio can be submitted before this callback returns.
+typedef void(*AudioCaptureStart)(void);
+
+// This callback notifies the decoder that the stream is stopping. Audio samples may still be submitted but they may be safely discarded.
+typedef void(*AudioCaptureStop)(void);
+
+// This callback performs the final teardown of the audio decoder. No additional audio will be submitted when this callback is invoked.
+typedef void(*AudioCaptureCleanup)(void);
+
+// This callback provides Opus audio data to be decoded and played. sampleLength is in bytes.
+//typedef void*(*AudioCaptureGetEncodedSample)(int* outLen);
+typedef bool(*AudioCaptureMic)(void* outSample);
+
+typedef void(*AudioCaptureEncode)(void* inFrame, int inMaxPayloadSize, void* outEncodedFrame, int* outSize);
+
+typedef void(*AudioCaptureTestPlayback)(void* data, int len);
+
+typedef bool(*AudioCaptureIsMuted)(void);
+
+typedef struct _AUDIO_CAPTURE_CALLBACKS {
+    AudioCaptureInit init;
+    AudioCaptureStart start;
+    AudioCaptureStop stop;
+    AudioCaptureCleanup cleanup;
+    AudioCaptureMic captureMic;
+    AudioCaptureEncode encode;
+    AudioCaptureTestPlayback testPlay;
+    AudioCaptureIsMuted isMuted;
+    int capabilities;
+} AUDIO_CAPTURE_CALLBACKS, *PAUDIO_CAPTURE_CALLBACKS;
+
+// Use this function to zero the audio callbacks when allocated on the stack or heap
+void LiInitializeAudioCaptureCallbacks(PAUDIO_CAPTURE_CALLBACKS acCallbacks);
+
 // Subject to change in future releases
 // Use LiGetStageName() for stable stage names
 #define STAGE_NONE 0
 #define STAGE_PLATFORM_INIT 1
 #define STAGE_NAME_RESOLUTION 2
 #define STAGE_AUDIO_STREAM_INIT 3
-#define STAGE_RTSP_HANDSHAKE 4
-#define STAGE_CONTROL_STREAM_INIT 5
-#define STAGE_VIDEO_STREAM_INIT 6
-#define STAGE_INPUT_STREAM_INIT 7
-#define STAGE_CONTROL_STREAM_START 8
-#define STAGE_VIDEO_STREAM_START 9
-#define STAGE_AUDIO_STREAM_START 10
-#define STAGE_INPUT_STREAM_START 11
-#define STAGE_MAX 12
+#define STAGE_AUDIO_CAPTURE_STREAM_INIT 4
+#define STAGE_RTSP_HANDSHAKE 5
+#define STAGE_CONTROL_STREAM_INIT 6
+#define STAGE_VIDEO_STREAM_INIT 7
+#define STAGE_INPUT_STREAM_INIT 8
+#define STAGE_CONTROL_STREAM_START 9
+#define STAGE_VIDEO_STREAM_START 10
+#define STAGE_AUDIO_STREAM_START 11
+#define STAGE_AUDIO_CAPTURE_STREAM_START 12
+#define STAGE_INPUT_STREAM_START 13
+#define STAGE_MAX 14
 
 // This callback is invoked to indicate that a stage of initialization is about to begin
 typedef void(*ConnListenerStageStarting)(int stage);
@@ -542,12 +590,12 @@ void LiInitializeServerInformation(PSERVER_INFORMATION serverInfo);
 //
 #ifdef DYNAMIC_PORTS
 int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION streamConfig, PCONNECTION_LISTENER_CALLBACKS clCallbacks,
-                      PDECODER_RENDERER_CALLBACKS drCallbacks, PAUDIO_RENDERER_CALLBACKS arCallbacks, void* renderContext, int drFlags,
-                      void* audioContext, int arFlags, PORT_DETAILS ports);
+                      PDECODER_RENDERER_CALLBACKS drCallbacks, PAUDIO_RENDERER_CALLBACKS arCallbacks, PAUDIO_CAPTURE_CALLBACKS,
+                      void* renderContext, int drFlags, void* audioContext, int arFlags, PORT_DETAILS ports);
 #else
 int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION streamConfig, PCONNECTION_LISTENER_CALLBACKS clCallbacks,
-                      PDECODER_RENDERER_CALLBACKS drCallbacks, PAUDIO_RENDERER_CALLBACKS arCallbacks, void* renderContext, int drFlags,
-                      void* audioContext, int arFlags);
+                      PDECODER_RENDERER_CALLBACKS drCallbacks, PAUDIO_RENDERER_CALLBACKS arCallbacks, PAUDIO_CAPTURE_CALLBACKS acCallbacks,
+                      void* renderContext, int drFlags, void* audioContext, int arFlags);
 #endif
 
 // This function stops streaming. This function is not thread-safe.
@@ -834,6 +882,8 @@ int LiSendHighResScrollEvent(short scrollAmount);
 // This is a Sunshine protocol extension.
 int LiSendHScrollEvent(signed char scrollClicks);
 int LiSendHighResHScrollEvent(short scrollAmount);
+
+int LiSendMicToggleEvent(bool isMuted);
 
 // This function returns a time in milliseconds with an implementation-defined epoch.
 uint64_t LiGetMillis(void);

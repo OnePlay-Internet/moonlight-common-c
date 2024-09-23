@@ -16,6 +16,7 @@ STREAM_CONFIGURATION StreamConfig;
 CONNECTION_LISTENER_CALLBACKS ListenerCallbacks;
 DECODER_RENDERER_CALLBACKS VideoCallbacks;
 AUDIO_RENDERER_CALLBACKS AudioCallbacks;
+AUDIO_CAPTURE_CALLBACKS AudioCaptureCallbacks;
 int NegotiatedVideoFormat;
 volatile bool ConnectionInterrupted;
 bool HighQualitySurroundSupported;
@@ -28,6 +29,7 @@ bool ReferenceFrameInvalidationSupported;
 uint16_t RtspPortNumber;
 uint16_t ControlPortNumber;
 uint16_t AudioPortNumber;
+uint16_t MicPortNumber;
 uint16_t VideoPortNumber;
 SS_PING AudioPingPayload;
 SS_PING VideoPingPayload;
@@ -85,6 +87,12 @@ void LiStopConnection(void) {
         stage--;
         Limelog("done\n");
     }
+    if (stage == STAGE_AUDIO_CAPTURE_STREAM_START) {
+        Limelog("Stopping audio stream...");
+        stopAudioCaptureStream();
+        stage--;
+        Limelog("done\n");
+    }
     if (stage == STAGE_VIDEO_STREAM_START) {
         Limelog("Stopping video stream...");
         stopVideoStream();
@@ -122,6 +130,12 @@ void LiStopConnection(void) {
     if (stage == STAGE_AUDIO_STREAM_INIT) {
         Limelog("Cleaning up audio stream...");
         destroyAudioStream();
+        stage--;
+        Limelog("done\n");
+    }
+    if (stage == STAGE_AUDIO_CAPTURE_STREAM_INIT) {
+        Limelog("Cleaning up audio stream...");
+        destroyAudioCaptureStream();
         stage--;
         Limelog("done\n");
     }
@@ -208,12 +222,12 @@ static bool parseRtspPortNumberFromUrl(const char* rtspSessionUrl, uint16_t* por
 // Starts the connection to the streaming machine
 #ifdef DYNAMIC_PORTS
 int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION streamConfig, PCONNECTION_LISTENER_CALLBACKS clCallbacks,
-                      PDECODER_RENDERER_CALLBACKS drCallbacks, PAUDIO_RENDERER_CALLBACKS arCallbacks, void* renderContext, int drFlags,
-                      void* audioContext, int arFlags, PORT_DETAILS ports)
+                      PDECODER_RENDERER_CALLBACKS drCallbacks, PAUDIO_RENDERER_CALLBACKS arCallbacks, PAUDIO_CAPTURE_CALLBACKS acCallbacks,
+                      void* renderContext, int drFlags, void* audioContext, int arFlags, PORT_DETAILS ports)
 #else
 int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION streamConfig, PCONNECTION_LISTENER_CALLBACKS clCallbacks,
-                      PDECODER_RENDERER_CALLBACKS drCallbacks, PAUDIO_RENDERER_CALLBACKS arCallbacks, void* renderContext, int drFlags,
-                      void* audioContext, int arFlags)
+                      PDECODER_RENDERER_CALLBACKS drCallbacks, PAUDIO_RENDERER_CALLBACKS arCallbacks, PAUDIO_CAPTURE_CALLBACKS acCallbacks,
+                      void* renderContext, int drFlags, void* audioContext, int arFlags)
 #endif
 {
     int err;
@@ -248,9 +262,10 @@ int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION stre
     }
 
     // Replace missing callbacks with placeholders
-    fixupMissingCallbacks(&drCallbacks, &arCallbacks, &clCallbacks);
+    fixupMissingCallbacks(&drCallbacks, &arCallbacks, &acCallbacks, &clCallbacks);
     memcpy(&VideoCallbacks, drCallbacks, sizeof(VideoCallbacks));
     memcpy(&AudioCallbacks, arCallbacks, sizeof(AudioCallbacks));
+    memcpy(&AudioCaptureCallbacks, acCallbacks, sizeof(AudioCaptureCallbacks));
 
 #ifdef LC_DEBUG_RECORD_MODE
     // Install the pass-through recorder callbacks
@@ -441,6 +456,23 @@ int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION stre
     ListenerCallbacks.stageComplete(STAGE_AUDIO_STREAM_INIT);
     Limelog("done\n");
 
+    // -----------Audio capture Stream Init Start-----------
+
+    Limelog("Initializing audio capture stream...");
+    ListenerCallbacks.stageStarting(STAGE_AUDIO_CAPTURE_STREAM_INIT);
+    err = initializeAudioCaptureStream();
+    if (err != 0) {
+        Limelog("failed: %d\n", err);
+        ListenerCallbacks.stageFailed(STAGE_AUDIO_STREAM_INIT, err);
+        goto Cleanup;
+    }
+    stage++;
+    LC_ASSERT(stage == STAGE_AUDIO_CAPTURE_STREAM_INIT);
+    ListenerCallbacks.stageComplete(STAGE_AUDIO_STREAM_INIT);
+    Limelog("done\n");
+
+    // -----------Audio capture Stream init End-----------
+
     Limelog("Starting RTSP handshake...");
     ListenerCallbacks.stageStarting(STAGE_RTSP_HANDSHAKE);
     err = performRtspHandshake(serverInfo, ports);
@@ -521,6 +553,27 @@ int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION stre
     LC_ASSERT(stage == STAGE_AUDIO_STREAM_START);
     ListenerCallbacks.stageComplete(STAGE_AUDIO_STREAM_START);
     Limelog("done\n");
+
+    // -----------Audio capture Stream Start-----------
+
+    Limelog("Starting audio capture stream...");
+    ListenerCallbacks.stageStarting(STAGE_AUDIO_CAPTURE_STREAM_START);
+    //TODO: check Audio Context and AcFlags
+    err = startAudioCaptureStream(audioContext, arFlags);
+    if (err != 0) {
+        Limelog("Audio Capture stream start failed: %d\n", err);
+        ListenerCallbacks.stageFailed(STAGE_AUDIO_CAPTURE_STREAM_START, err);
+        //goto Cleanup;
+        // TODO: if mic is not present then disable mic streaming for now
+        // TODO: user should be able to select mic/change mic on runtime.
+        // TODO: Mic device object should be created at the start of session
+    }
+    stage++;
+    LC_ASSERT(stage == STAGE_AUDIO_CAPTURE_STREAM_START);
+    ListenerCallbacks.stageComplete(STAGE_AUDIO_CAPTURE_STREAM_START);
+    Limelog("done\n");
+
+    // -----------Audio capture Stream End-----------
 
     Limelog("Starting input stream...");
     ListenerCallbacks.stageStarting(STAGE_INPUT_STREAM_START);
