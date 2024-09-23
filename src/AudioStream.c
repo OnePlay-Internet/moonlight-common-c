@@ -25,11 +25,6 @@ static uint8_t opusHeaderByte;
 
 #define MAX_PACKET_SIZE 1400
 
-// This is much larger than we should typically have buffered, but
-// it needs to be. We need a cushion in case our thread gets blocked
-// for longer than normal.
-#define RTP_RECV_BUFFER (64 * 1024)
-
 typedef struct _QUEUE_AUDIO_PACKET_HEADER {
     LINKED_BLOCKING_QUEUE_ENTRY lentry;
     int size;
@@ -98,7 +93,7 @@ int notifyAudioPortNegotiationComplete(void) {
 
     // For GFE 3.22 compatibility, we must start the audio ping thread before the RTSP handshake.
     // It will not reply to our RTSP PLAY request until the audio ping has been received.
-    rtpSocket = bindUdpSocket(RemoteAddr.ss_family, &LocalAddr, AddrLen, 0);
+    rtpSocket = bindUdpSocket(RemoteAddr.ss_family, &LocalAddr, AddrLen, 0, SOCK_QOS_TYPE_AUDIO);
     if (rtpSocket == INVALID_SOCKET) {
         return LastSocketFail();
     }
@@ -133,7 +128,6 @@ void destroyAudioStream(void) {
         if (pingThreadStarted) {
             PltInterruptThread(&udpPingThread);
             PltJoinThread(&udpPingThread);
-            PltCloseThread(&udpPingThread);
         }
 
         closeSocket(rtpSocket);
@@ -232,8 +226,9 @@ static void decodeInputData(PQUEUED_AUDIO_PACKET packet) {
         else {
             // Opus header should stay constant for the entire stream.
             // If it doesn't, it may indicate that the RtpAudioQueue
-            // incorrectly recovered a data shard.
-            LC_ASSERT_VT(((uint8_t*)(rtp + 1))[0] == opusHeaderByte);
+            // incorrectly recovered a data shard. Sunshine violates
+            // this for surround sound in some cases, so just ignore it.
+            LC_ASSERT_VT(((uint8_t*)(rtp + 1))[0] == opusHeaderByte || IS_SUNSHINE());
         }
 #endif
 
@@ -421,11 +416,6 @@ void stopAudioStream(void) {
         PltJoinThread(&decoderThread);
     }
 
-    PltCloseThread(&receiveThread);
-    if ((AudioCallbacks.capabilities & CAPABILITY_DIRECT_SUBMIT) == 0) {
-        PltCloseThread(&decoderThread);
-    }
-
     AudioCallbacks.cleanup();
 }
 
@@ -468,7 +458,6 @@ int startAudioStream(void* audioContext, int arFlags) {
             AudioCallbacks.stop();
             PltInterruptThread(&receiveThread);
             PltJoinThread(&receiveThread);
-            PltCloseThread(&receiveThread);
             closeSocket(rtpSocket);
             AudioCallbacks.cleanup();
             return err;

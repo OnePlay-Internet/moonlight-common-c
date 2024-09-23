@@ -40,6 +40,30 @@ extern uint16_t VideoPortNumber;
 
 extern SS_PING AudioPingPayload;
 extern SS_PING VideoPingPayload;
+extern uint32_t ControlConnectData;
+
+extern uint32_t SunshineFeatureFlags;
+
+// Encryption flags shared by Sunshine and Moonlight in RTSP
+#define SS_ENC_CONTROL_V2 0x01
+#define SS_ENC_VIDEO 0x02
+#define SS_ENC_AUDIO 0x04
+
+extern uint32_t EncryptionFeaturesSupported;
+extern uint32_t EncryptionFeaturesRequested;
+extern uint32_t EncryptionFeaturesEnabled;
+
+// ENet channel ID values
+#define CTRL_CHANNEL_GENERIC      0x00
+#define CTRL_CHANNEL_URGENT       0x01 // IDR and reference frame invalidation requests
+#define CTRL_CHANNEL_KEYBOARD     0x02
+#define CTRL_CHANNEL_MOUSE        0x03
+#define CTRL_CHANNEL_PEN          0x04
+#define CTRL_CHANNEL_TOUCH        0x05
+#define CTRL_CHANNEL_UTF8         0x06
+#define CTRL_CHANNEL_GAMEPAD_BASE 0x10 // 0x10 to 0x1F by controller index
+#define CTRL_CHANNEL_SENSOR_BASE  0x20 // 0x20 to 0x2F by controller index
+#define CTRL_CHANNEL_COUNT        0x30
 
 extern uint32_t SunshineFeatureFlags;
 
@@ -76,6 +100,7 @@ extern uint32_t SunshineFeatureFlags;
 
 // Client feature flags for x-ml-general.featureFlags SDP attribute
 #define ML_FF_FEC_STATUS 0x01 // Client sends SS_FRAME_FEC_STATUS for frame losses
+#define ML_FF_SESSION_ID_V1 0x02 // Client supports X-SS-Ping-Payload and X-SS-Connect-Data
 
 #define UDP_RECV_POLL_TIMEOUT_MS 100
 
