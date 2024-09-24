@@ -681,7 +681,7 @@ int startAudioCaptureStream(void* audioCaptureContext, int arFlags)
         AudioCaptureCallbacks.stop();
         PltInterruptThread(&captureThread);
         PltJoinThread(&captureThread);
-        PltCloseThread(&captureThread);
+        //PltCloseThread(&captureThread);
         closeSocket(sockMic);
         AudioCaptureCallbacks.cleanup();
         return err;
@@ -693,10 +693,10 @@ int startAudioCaptureStream(void* audioCaptureContext, int arFlags)
         AudioCaptureCallbacks.stop();
         PltInterruptThread(&captureThread);
         PltJoinThread(&captureThread);
-        PltCloseThread(&captureThread);
+        //PltCloseThread(&captureThread);
         PltInterruptThread(&encoderThread);
         PltJoinThread(&encoderThread);
-        PltCloseThread(&encoderThread);
+        //PltCloseThread(&encoderThread);
         closeSocket(sockMic);
         AudioCaptureCallbacks.cleanup();
         return err;
@@ -725,11 +725,11 @@ void stopAudioCaptureStream(void)
         PltJoinThread(&encoderThread);
     }
 
-    PltCloseThread(&senderThread);
-    if ((AudioCaptureCallbacks.capabilities & CAPABILITY_DIRECT_SUBMIT) == 0) {
-        PltCloseThread(&captureThread);
-        PltCloseThread(&encoderThread);
-    }
+    //PltCloseThread(&senderThread);
+    // if ((AudioCaptureCallbacks.capabilities & CAPABILITY_DIRECT_SUBMIT) == 0) {
+    //   PltCloseThread(&captureThread);
+    //   PltCloseThread(&encoderThread);
+    // }
 
     AudioCaptureCallbacks.cleanup();
 
