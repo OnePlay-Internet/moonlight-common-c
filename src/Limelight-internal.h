@@ -143,7 +143,11 @@ int sendMicStatusPacketOnControlStream(unsigned char* data, int lenght);
 void flushInputOnControlStream(void);
 bool isControlDataInTransit(void);
 
+#ifdef DYNAMIC_PORTS
 int performRtspHandshake(PSERVER_INFORMATION serverInfo, PORT_DETAILS ports);
+#else
+int performRtspHandshake(PSERVER_INFORMATION serverInfo);
+#endif
 
 void initializeVideoDepacketizer(int pktSize);
 void destroyVideoDepacketizer(void);

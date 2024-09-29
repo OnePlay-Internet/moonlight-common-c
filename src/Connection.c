@@ -475,7 +475,11 @@ int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION stre
 
     Limelog("Starting RTSP handshake...");
     ListenerCallbacks.stageStarting(STAGE_RTSP_HANDSHAKE);
+#ifdef DYNAMIC_PORTS
     err = performRtspHandshake(serverInfo, ports);
+#else
+    err = performRtspHandshake(serverInfo);
+#endif
     if (err != 0) {
         Limelog("failed: %d\n", err);
         ListenerCallbacks.stageFailed(STAGE_RTSP_HANDSHAKE, err);
