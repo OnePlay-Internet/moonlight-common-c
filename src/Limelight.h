@@ -416,6 +416,8 @@ void LiInitializeAudioCaptureCallbacks(PAUDIO_CAPTURE_CALLBACKS acCallbacks);
 
 // Subject to change in future releases
 // Use LiGetStageName() for stable stage names
+
+#ifdef MICROPHONE_FEATURE
 #define STAGE_NONE 0
 #define STAGE_PLATFORM_INIT 1
 #define STAGE_NAME_RESOLUTION 2
@@ -431,7 +433,21 @@ void LiInitializeAudioCaptureCallbacks(PAUDIO_CAPTURE_CALLBACKS acCallbacks);
 #define STAGE_AUDIO_CAPTURE_STREAM_START 12
 #define STAGE_INPUT_STREAM_START 13
 #define STAGE_MAX 14
-
+#else
+#define STAGE_NONE 0
+#define STAGE_PLATFORM_INIT 1
+#define STAGE_NAME_RESOLUTION 2
+#define STAGE_AUDIO_STREAM_INIT 3
+#define STAGE_RTSP_HANDSHAKE 4
+#define STAGE_CONTROL_STREAM_INIT 5
+#define STAGE_VIDEO_STREAM_INIT 6
+#define STAGE_INPUT_STREAM_INIT 7
+#define STAGE_CONTROL_STREAM_START 8
+#define STAGE_VIDEO_STREAM_START 9
+#define STAGE_AUDIO_STREAM_START 10
+#define STAGE_INPUT_STREAM_START 11
+#define STAGE_MAX 12
+#endif
 // This callback is invoked to indicate that a stage of initialization is about to begin
 typedef void(*ConnListenerStageStarting)(int stage);
 

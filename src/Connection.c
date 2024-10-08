@@ -87,12 +87,14 @@ void LiStopConnection(void) {
         stage--;
         Limelog("done\n");
     }
+#ifdef MICROPHONE_FEATURE
     if (stage == STAGE_AUDIO_CAPTURE_STREAM_START) {
         Limelog("Stopping audio stream...");
         stopAudioCaptureStream();
         stage--;
         Limelog("done\n");
     }
+#endif
     if (stage == STAGE_VIDEO_STREAM_START) {
         Limelog("Stopping video stream...");
         stopVideoStream();
@@ -133,12 +135,14 @@ void LiStopConnection(void) {
         stage--;
         Limelog("done\n");
     }
+#ifdef MICROPHONE_FEATURE
     if (stage == STAGE_AUDIO_CAPTURE_STREAM_INIT) {
         Limelog("Cleaning up audio stream...");
         destroyAudioCaptureStream();
         stage--;
         Limelog("done\n");
     }
+#endif
     if (stage == STAGE_NAME_RESOLUTION) {
         // Nothing to do
         stage--;
@@ -457,7 +461,7 @@ int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION stre
     Limelog("done\n");
 
     // -----------Audio capture Stream Init Start-----------
-
+#ifdef MICROPHONE_FEATURE
     Limelog("Initializing audio capture stream...");
     ListenerCallbacks.stageStarting(STAGE_AUDIO_CAPTURE_STREAM_INIT);
     err = initializeAudioCaptureStream();
@@ -470,7 +474,7 @@ int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION stre
     LC_ASSERT(stage == STAGE_AUDIO_CAPTURE_STREAM_INIT);
     ListenerCallbacks.stageComplete(STAGE_AUDIO_STREAM_INIT);
     Limelog("done\n");
-
+#endif
     // -----------Audio capture Stream init End-----------
 
     Limelog("Starting RTSP handshake...");
@@ -559,7 +563,7 @@ int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION stre
     Limelog("done\n");
 
     // -----------Audio capture Stream Start-----------
-
+#ifdef MICROPHONE_FEATURE
     Limelog("Starting audio capture stream...");
     ListenerCallbacks.stageStarting(STAGE_AUDIO_CAPTURE_STREAM_START);
     //TODO: check Audio Context and AcFlags
@@ -576,7 +580,7 @@ int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION stre
     LC_ASSERT(stage == STAGE_AUDIO_CAPTURE_STREAM_START);
     ListenerCallbacks.stageComplete(STAGE_AUDIO_CAPTURE_STREAM_START);
     Limelog("done\n");
-
+#endif
     // -----------Audio capture Stream End-----------
 
     Limelog("Starting input stream...");
