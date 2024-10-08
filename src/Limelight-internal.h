@@ -23,6 +23,7 @@ extern STREAM_CONFIGURATION StreamConfig;
 extern CONNECTION_LISTENER_CALLBACKS ListenerCallbacks;
 extern DECODER_RENDERER_CALLBACKS VideoCallbacks;
 extern AUDIO_RENDERER_CALLBACKS AudioCallbacks;
+extern AUDIO_CAPTURE_CALLBACKS AudioCaptureCallbacks;
 extern int NegotiatedVideoFormat;
 extern volatile bool ConnectionInterrupted;
 extern bool HighQualitySurroundSupported;
@@ -36,10 +37,35 @@ extern bool ReferenceFrameInvalidationSupported;
 extern uint16_t RtspPortNumber;
 extern uint16_t ControlPortNumber;
 extern uint16_t AudioPortNumber;
+extern uint16_t MicPortNumber;
 extern uint16_t VideoPortNumber;
 
 extern SS_PING AudioPingPayload;
 extern SS_PING VideoPingPayload;
+extern uint32_t ControlConnectData;
+
+extern uint32_t SunshineFeatureFlags;
+
+// Encryption flags shared by Sunshine and Moonlight in RTSP
+#define SS_ENC_CONTROL_V2 0x01
+#define SS_ENC_VIDEO 0x02
+#define SS_ENC_AUDIO 0x04
+
+extern uint32_t EncryptionFeaturesSupported;
+extern uint32_t EncryptionFeaturesRequested;
+extern uint32_t EncryptionFeaturesEnabled;
+
+// ENet channel ID values
+#define CTRL_CHANNEL_GENERIC      0x00
+#define CTRL_CHANNEL_URGENT       0x01 // IDR and reference frame invalidation requests
+#define CTRL_CHANNEL_KEYBOARD     0x02
+#define CTRL_CHANNEL_MOUSE        0x03
+#define CTRL_CHANNEL_PEN          0x04
+#define CTRL_CHANNEL_TOUCH        0x05
+#define CTRL_CHANNEL_UTF8         0x06
+#define CTRL_CHANNEL_GAMEPAD_BASE 0x10 // 0x10 to 0x1F by controller index
+#define CTRL_CHANNEL_SENSOR_BASE  0x20 // 0x20 to 0x2F by controller index
+#define CTRL_CHANNEL_COUNT        0x30
 
 extern uint32_t SunshineFeatureFlags;
 
@@ -76,6 +102,7 @@ extern uint32_t SunshineFeatureFlags;
 
 // Client feature flags for x-ml-general.featureFlags SDP attribute
 #define ML_FF_FEC_STATUS 0x01 // Client sends SS_FRAME_FEC_STATUS for frame losses
+#define ML_FF_SESSION_ID_V1 0x02 // Client supports X-SS-Ping-Payload and X-SS-Connect-Data
 
 #define UDP_RECV_POLL_TIMEOUT_MS 100
 
@@ -98,7 +125,7 @@ bool isReferenceFrameInvalidationEnabled(void);
 void* extendBuffer(void* ptr, size_t newSize);
 
 void fixupMissingCallbacks(PDECODER_RENDERER_CALLBACKS* drCallbacks, PAUDIO_RENDERER_CALLBACKS* arCallbacks,
-    PCONNECTION_LISTENER_CALLBACKS* clCallbacks);
+    PAUDIO_CAPTURE_CALLBACKS* acCallbacks, PCONNECTION_LISTENER_CALLBACKS* clCallbacks);
 void setRecorderCallbacks(PDECODER_RENDERER_CALLBACKS drCallbacks, PAUDIO_RENDERER_CALLBACKS arCallbacks);
 
 char* getSdpPayloadForStreamConfig(int rtspClientVersion, int* length);
@@ -112,10 +139,15 @@ void connectionReceivedCompleteFrame(uint32_t frameIndex);
 void connectionSawFrame(uint32_t frameIndex);
 void connectionSendFrameFecStatus(PSS_FRAME_FEC_STATUS fecStatus);
 int sendInputPacketOnControlStream(unsigned char* data, int length, uint8_t channelId, uint32_t flags, bool moreData);
+int sendMicStatusPacketOnControlStream(unsigned char* data, int lenght);
 void flushInputOnControlStream(void);
 bool isControlDataInTransit(void);
 
+#ifdef DYNAMIC_PORTS
 int performRtspHandshake(PSERVER_INFORMATION serverInfo, PORT_DETAILS ports);
+#else
+int performRtspHandshake(PSERVER_INFORMATION serverInfo);
+#endif
 
 void initializeVideoDepacketizer(int pktSize);
 void destroyVideoDepacketizer(void);
@@ -135,6 +167,12 @@ int notifyAudioPortNegotiationComplete(void);
 void destroyAudioStream(void);
 int startAudioStream(void* audioContext, int arFlags);
 void stopAudioStream(void);
+
+int initializeAudioCaptureStream(void);
+int notifyAudioCapturePortNegotiationComplete(void);
+void destroyAudioCaptureStream(void);
+int startAudioCaptureStream(void* audioCaptureContext, int arFlags);
+void stopAudioCaptureStream(void);
 
 int initializeInputStream(void);
 void destroyInputStream(void);

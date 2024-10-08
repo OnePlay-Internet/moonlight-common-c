@@ -90,7 +90,7 @@ static int intervalTotalFrameCount;
 static uint64_t intervalStartTimeMs;
 static int lastIntervalLossPercentage;
 static int lastConnectionStatusUpdate;
-static int currentEnetSequenceNumber;
+static uint32_t currentEnetSequenceNumber;
 static uint64_t firstFrameTimeMs;
 
 static LINKED_BLOCKING_QUEUE invalidReferenceFrameTuples;
@@ -118,6 +118,7 @@ static PPLT_CRYPTO_CONTEXT decryptionCtx;
 #define IDX_RUMBLE_TRIGGER_DATA 9
 #define IDX_SET_MOTION_EVENT 10
 #define IDX_SET_RGB_LED 11
+#define IDX_TOGGLE_MIC 12
 
 #define CONTROL_STREAM_TIMEOUT_SEC 10
 #define CONTROL_STREAM_LINGER_TIMEOUT_SEC 2
@@ -177,6 +178,7 @@ static const short packetTypesGen7[] = {
     -1,     // Rumble triggers (unused)
     -1,     // Set motion event (unused)
     -1,     // Set RGB LED (unused)
+    0x0108, // Mic Toggle
 };
 static const short packetTypesGen7Enc[] = {
     0x0302, // Request IDR frame
@@ -191,6 +193,7 @@ static const short packetTypesGen7Enc[] = {
     0x5500, // Rumble triggers (Sunshine protocol extension)
     0x5501, // Set motion event (Sunshine protocol extension)
     0x5502, // Set RGB LED (Sunshine protocol extension)
+    0x0108, // Mic Toggle
 };
 
 static const char requestIdrFrameGen3[] = { 0, 0 };
@@ -362,7 +365,7 @@ void destroyControlStream(void) {
 
 static void queueFrameInvalidationTuple(uint32_t startFrame, uint32_t endFrame) {
     LC_ASSERT(startFrame <= endFrame);
-    
+
     if (isReferenceFrameInvalidationEnabled()) {
         PQUEUED_FRAME_INVALIDATION_TUPLE qfit;
         qfit = malloc(sizeof(*qfit));
@@ -411,7 +414,7 @@ void connectionSendFrameFecStatus(PSS_FRAME_FEC_STATUS fecStatus) {
     if (!IS_SUNSHINE()) {
         return;
     }
-    
+
     // Queue a frame FEC status message. This is best-effort only.
     PQUEUED_FRAME_FEC_STATUS queuedFecStatus = malloc(sizeof(*queuedFecStatus));
     if (queuedFecStatus != NULL) {
@@ -501,11 +504,31 @@ static PNVCTL_TCP_PACKET_HEADER readNvctlPacketTcp(void) {
 
 static bool encryptControlMessage(PNVCTL_ENCRYPTED_PACKET_HEADER encPacket, PNVCTL_ENET_PACKET_HEADER_V2 packet) {
     unsigned char iv[16] = { 0 };
+    int ivSize;
     int encryptedSize = sizeof(*packet) + packet->payloadLength;
 
-    // This is a truncating cast, but it's what Nvidia does, so we have to mimic it.
     // NB: Setting the IV must happen while encPacket->seq is still in native byte-order!
-    iv[0] = (unsigned char)encPacket->seq;
+    if (EncryptionFeaturesEnabled & SS_ENC_CONTROL_V2) {
+        // Populate the IV in little endian byte order
+        iv[3] = (unsigned char)(encPacket->seq >> 24);
+        iv[2] = (unsigned char)(encPacket->seq >> 16);
+        iv[1] = (unsigned char)(encPacket->seq >> 8);
+        iv[0] = (unsigned char)(encPacket->seq >> 0);
+
+        // Set high bytes to something unique to ensure no IV collisions
+        iv[10] = (unsigned char)'C'; // Client originated
+        iv[11] = (unsigned char)'C'; // Control stream
+
+        // Use 12-byte IV which is ideal for AES-GCM
+        ivSize = 12;
+    }
+    else {
+        // This is a truncating cast, but it's what Nvidia does, so we have to mimic it.
+        iv[0] = (unsigned char)encPacket->seq;
+
+        // Nvidia's old style encryption uses a 16-byte IV
+        ivSize = 16;
+    }
 
     encPacket->encryptedHeaderType = LE16(encPacket->encryptedHeaderType);
     encPacket->length = LE16(encPacket->length);
@@ -514,9 +537,11 @@ static bool encryptControlMessage(PNVCTL_ENCRYPTED_PACKET_HEADER encPacket, PNVC
     packet->type = LE16(packet->type);
     packet->payloadLength = LE16(packet->payloadLength);
 
+    LC_ASSERT(ivSize <= (int)sizeof(iv));
+    LC_ASSERT(ivSize == 12 || ivSize == 16);
     return PltEncryptMessage(encryptionCtx, ALGORITHM_AES_GCM, 0,
                              (unsigned char*)StreamConfig.remoteInputAesKey, sizeof(StreamConfig.remoteInputAesKey),
-                             iv, sizeof(iv),
+                             iv, ivSize,
                              (unsigned char*)(encPacket + 1), AES_GCM_TAG_LENGTH, // Write tag into the space after the encrypted header
                              (unsigned char*)packet, encryptedSize,
                              ((unsigned char*)(encPacket + 1)) + AES_GCM_TAG_LENGTH, &encryptedSize); // Write ciphertext after the GCM tag
@@ -525,6 +550,7 @@ static bool encryptControlMessage(PNVCTL_ENCRYPTED_PACKET_HEADER encPacket, PNVC
 // Caller must free() *packet on success!!!
 static bool decryptControlMessageToV1(PNVCTL_ENCRYPTED_PACKET_HEADER encPacket, int encPacketLength, PNVCTL_ENET_PACKET_HEADER_V1* packet, int* packetLength) {
     unsigned char iv[16] = { 0 };
+    int ivSize;
 
     *packet = NULL;
 
@@ -545,8 +571,27 @@ static bool decryptControlMessageToV1(PNVCTL_ENCRYPTED_PACKET_HEADER encPacket, 
         return false;
     }
 
-    // This is a truncating cast, but it's what Nvidia does, so we have to mimic it.
-    iv[0] = (unsigned char)encPacket->seq;
+    if (EncryptionFeaturesEnabled & SS_ENC_CONTROL_V2) {
+        // Populate the IV in little endian byte order
+        iv[3] = (unsigned char)(encPacket->seq >> 24);
+        iv[2] = (unsigned char)(encPacket->seq >> 16);
+        iv[1] = (unsigned char)(encPacket->seq >> 8);
+        iv[0] = (unsigned char)(encPacket->seq >> 0);
+
+        // Set high bytes to something unique to ensure no IV collisions
+        iv[10] = (unsigned char)'H'; // Host originated
+        iv[11] = (unsigned char)'C'; // Control stream
+
+        // Use 12-byte IV which is ideal for AES-GCM
+        ivSize = 12;
+    }
+    else {
+        // This is a truncating cast, but it's what Nvidia does, so we have to mimic it.
+        iv[0] = (unsigned char)encPacket->seq;
+
+        // Nvidia's old style encryption uses a 16-byte IV
+        ivSize = 16;
+    }
 
     int plaintextLength = encPacket->length - sizeof(encPacket->seq) - AES_GCM_TAG_LENGTH;
     *packet = malloc(plaintextLength);
@@ -554,9 +599,11 @@ static bool decryptControlMessageToV1(PNVCTL_ENCRYPTED_PACKET_HEADER encPacket, 
         return false;
     }
 
+    LC_ASSERT(ivSize <= (int)sizeof(iv));
+    LC_ASSERT(ivSize == 12 || ivSize == 16);
     if (!PltDecryptMessage(decryptionCtx, ALGORITHM_AES_GCM, 0,
                            (unsigned char*)StreamConfig.remoteInputAesKey, sizeof(StreamConfig.remoteInputAesKey),
-                           iv, sizeof(iv),
+                           iv, ivSize,
                            (unsigned char*)(encPacket + 1), AES_GCM_TAG_LENGTH, // The tag is located right after the header
                            ((unsigned char*)(encPacket + 1)) + AES_GCM_TAG_LENGTH, plaintextLength, // The ciphertext is after the tag
                            (unsigned char*)*packet, &plaintextLength)) {
@@ -631,12 +678,20 @@ static bool sendMessageEnet(short ptype, short paylen, const void* payload, uint
         encPacket->length = sizeof(encPacket->seq) + AES_GCM_TAG_LENGTH + sizeof(*packet) + paylen;
         encPacket->seq = currentEnetSequenceNumber++;
 
+        if(ptype == packetTypes[IDX_TOGGLE_MIC])
+        {
+            Limelog("Encrypted -> len:: %d | SeqNumber :: %d", encPacket->length, encPacket->seq );
+        }
         // Construct the plaintext data for encryption
         LC_ASSERT(sizeof(*packet) + paylen < sizeof(tempBuffer));
         packet = (PNVCTL_ENET_PACKET_HEADER_V2)tempBuffer;
         packet->type = ptype;
         packet->payloadLength = paylen;
         memcpy(&packet[1], payload, paylen);
+
+        if (ptype == packetTypes[IDX_TOGGLE_MIC]) {
+            Limelog("packet -> len:: %d ", packet->payloadLength);
+        }
 
         // Encrypt the data into the final packet (and byteswap for BE machines)
         if (!encryptControlMessage(encPacket, packet)) {
@@ -678,15 +733,16 @@ static bool sendMessageEnet(short ptype, short paylen, const void* payload, uint
 
     // Queue the packet to be sent
     err = enet_peer_send(peer, channelId, enetPacket);
+    bool packetQueued = (err == 0);
 
     // If there is no more data coming soon, send the packet now
-    if (!moreData) {
-        enet_host_service(client, NULL, 0);
+    if (!moreData && packetQueued) {
+        err = enet_host_service(client, NULL, 0);
 
         // Wait until the packet is actually sent to provide backpressure on senders
-        if (err == 0 && (flags & ENET_PACKET_FLAG_RELIABLE)) {
+        if (flags & ENET_PACKET_FLAG_RELIABLE) {
             // Don't wait longer than 10 milliseconds to avoid blocking callers for too long
-            for (int i = 0; i < 10; i++) {
+            for (int i = 0; err >= 0 && i < 10; i++) {
                 // Break on disconnected, acked/freed, or sent (pending ack).
                 if (peer->state != ENET_PEER_STATE_CONNECTED || packetFreed || isPacketSentWaitingForAck(enetPacket)) {
                     break;
@@ -698,10 +754,10 @@ static bool sendMessageEnet(short ptype, short paylen, const void* payload, uint
                 PltLockMutex(&enetMutex);
 
                 // Try to send the packet again
-                enet_host_service(client, NULL, 0);
+                err = enet_host_service(client, NULL, 0);
             }
 
-            if (peer->state == ENET_PEER_STATE_CONNECTED && !packetFreed && !isPacketSentWaitingForAck(enetPacket)) {
+            if (err >= 0 && peer->state == ENET_PEER_STATE_CONNECTED && !packetFreed && !isPacketSentWaitingForAck(enetPacket)) {
                 Limelog("Control message took over 10 ms to send (net latency: %u ms | packet loss: %f%%)\n",
                         peer->roundTripTime, peer->packetLoss / (float)ENET_PEER_PACKET_LOSS_SCALE);
             }
@@ -718,7 +774,9 @@ static bool sendMessageEnet(short ptype, short paylen, const void* payload, uint
 
     if (err < 0) {
         Limelog("Failed to send ENet control packet\n");
-        enet_packet_destroy(enetPacket);
+        if (!packetQueued) {
+            enet_packet_destroy(enetPacket);
+        }
         return false;
     }
 
@@ -1068,6 +1126,10 @@ static void controlReceiveThreadFunc(void* context) {
         }
 
         if (err < 0) {
+            // The error from serviceEnetHost() should be propagated via LastSocketError()
+            LC_ASSERT(err == -1);
+
+            err = LastSocketFail();
             Limelog("Control stream connection failed: %d\n", err);
             ListenerCallbacks.connectionTerminated(err);
             return;
@@ -1115,10 +1177,10 @@ static void controlReceiveThreadFunc(void* context) {
                     ctlHdr->type = LE16(ctlHdr->type);
                 }
                 else {
-                    // What do we do here???
                     LC_ASSERT_VT(false);
-                    packetLength = (int)event.packet->dataLength;
-                    event.packet->data = NULL;
+                    Limelog("Discarding unencrypted packet on encrypted control stream: %04x\n", ctlHdr->type);
+                    enet_packet_destroy(event.packet);
+                    continue;
                 }
             }
             else {
@@ -1286,7 +1348,7 @@ static void lossStatsThreadFunc(void* context) {
                         free(queuedFrameStatus);
                         return;
                     }
-                    
+
                     free(queuedFrameStatus);
                 }
             }
@@ -1314,7 +1376,7 @@ static void lossStatsThreadFunc(void* context) {
     }
     else {
         char* lossStatsPayload;
-        
+
         // Sunshine should use the newer codepath above
         LC_ASSERT(!IS_SUNSHINE());
 
@@ -1490,7 +1552,7 @@ int stopControlStream(void) {
     if (ctlSock != INVALID_SOCKET) {
         shutdownTcpSocket(ctlSock);
     }
-    
+
     PltInterruptThread(&lossStatsThread);
     PltInterruptThread(&requestIdrFrameThread);
     PltInterruptThread(&controlReceiveThread);
@@ -1501,16 +1563,10 @@ int stopControlStream(void) {
     PltJoinThread(&controlReceiveThread);
     PltJoinThread(&asyncCallbackThread);
 
-    PltCloseThread(&lossStatsThread);
-    PltCloseThread(&requestIdrFrameThread);
-    PltCloseThread(&controlReceiveThread);
-    PltCloseThread(&asyncCallbackThread);
-
     // We will only have an RFI thread if RFI is enabled
     if (isReferenceFrameInvalidationEnabled()) {
         PltInterruptThread(&invalidateRefFramesThread);
         PltJoinThread(&invalidateRefFramesThread);
-        PltCloseThread(&invalidateRefFramesThread);
     }
 
     if (peer != NULL) {
@@ -1523,7 +1579,7 @@ int stopControlStream(void) {
         enet_host_destroy(client);
         client = NULL;
     }
-    
+
     if (ctlSock != INVALID_SOCKET) {
         closeSocket(ctlSock);
         ctlSock = INVALID_SOCKET;
@@ -1538,6 +1594,17 @@ int sendInputPacketOnControlStream(unsigned char* data, int length, uint8_t chan
 
     // Send the input data (no reply expected)
     if (sendMessageAndForget(packetTypes[IDX_INPUT_DATA], length, data, channelId, flags, moreData) == 0) {
+        return -1;
+    }
+
+    return 0;
+}
+
+int sendMicStatusPacketOnControlStream(unsigned char* data, int length){
+
+    Limelog("len of the mic send %d", length);
+    if(sendMessageAndForget(packetTypes[IDX_TOGGLE_MIC], length, data, CTRL_CHANNEL_UTF8, ENET_PACKET_FLAG_RELIABLE, false) == 0)
+    {
         return -1;
     }
 
@@ -1594,11 +1661,16 @@ int startControlStream(void) {
     if (AppVersionQuad[0] >= 5) {
         ENetAddress remoteAddress, localAddress;
         ENetEvent event;
-        
+
         LC_ASSERT(ControlPortNumber != 0);
 
         enet_address_set_address(&localAddress, (struct sockaddr *)&LocalAddr, AddrLen);
+#ifdef __3DS__
+        // binding to wildcard port is broken on the 3DS, so we need to define a port manually
+        enet_address_set_port(&localAddress, htons(n3ds_udp_port++));
+#else
         enet_address_set_port(&localAddress, 0); // Wildcard port
+#endif
 
         enet_address_set_address(&remoteAddress, (struct sockaddr *)&RemoteAddr, AddrLen);
         enet_address_set_port(&remoteAddress, ControlPortNumber);
@@ -1621,7 +1693,7 @@ int startControlStream(void) {
         enet_socket_set_option (client->socket, ENET_SOCKOPT_QOS, 1);
 
         // Connect to the host
-        peer = enet_host_connect(client, &remoteAddress, CTRL_CHANNEL_COUNT, 0);
+        peer = enet_host_connect(client, &remoteAddress, CTRL_CHANNEL_COUNT, ControlConnectData);
         if (peer == NULL) {
             stopping = true;
             enet_host_destroy(client);
@@ -1663,9 +1735,15 @@ int startControlStream(void) {
 
         // Ensure the connect verify ACK is sent immediately
         enet_host_flush(client);
-        
+
+#ifdef __3DS__
+        // Set the peer timeout to 1 minute and limit backoff to 2x RTT
+        // The 3DS can take a bit longer to set up when starting fresh
+        enet_peer_timeout(peer, 2, 60000, 60000);
+#else
         // Set the peer timeout to 10 seconds and limit backoff to 2x RTT
         enet_peer_timeout(peer, 2, 10000, 10000);
+#endif
     }
     else {
         // NB: Do NOT use ControlPortNumber here. 47995 is correct for these old versions.
@@ -1716,7 +1794,6 @@ int startControlStream(void) {
 
         PltInterruptThread(&controlReceiveThread);
         PltJoinThread(&controlReceiveThread);
-        PltCloseThread(&controlReceiveThread);
 
         if (ctlSock != INVALID_SOCKET) {
             closeSocket(ctlSock);
@@ -1751,7 +1828,6 @@ int startControlStream(void) {
 
         PltInterruptThread(&controlReceiveThread);
         PltJoinThread(&controlReceiveThread);
-        PltCloseThread(&controlReceiveThread);
 
         if (ctlSock != INVALID_SOCKET) {
             closeSocket(ctlSock);
@@ -1779,7 +1855,6 @@ int startControlStream(void) {
 
         PltInterruptThread(&controlReceiveThread);
         PltJoinThread(&controlReceiveThread);
-        PltCloseThread(&controlReceiveThread);
 
         if (ctlSock != INVALID_SOCKET) {
             closeSocket(ctlSock);
@@ -1807,11 +1882,9 @@ int startControlStream(void) {
 
         PltInterruptThread(&lossStatsThread);
         PltJoinThread(&lossStatsThread);
-        PltCloseThread(&lossStatsThread);
 
         PltInterruptThread(&controlReceiveThread);
         PltJoinThread(&controlReceiveThread);
-        PltCloseThread(&controlReceiveThread);
 
         if (ctlSock != INVALID_SOCKET) {
             closeSocket(ctlSock);
@@ -1841,15 +1914,47 @@ int startControlStream(void) {
 
         PltInterruptThread(&lossStatsThread);
         PltJoinThread(&lossStatsThread);
-        PltCloseThread(&lossStatsThread);
 
         PltInterruptThread(&controlReceiveThread);
         PltJoinThread(&controlReceiveThread);
-        PltCloseThread(&controlReceiveThread);
 
         PltInterruptThread(&requestIdrFrameThread);
         PltJoinThread(&requestIdrFrameThread);
-        PltCloseThread(&requestIdrFrameThread);
+
+        if (ctlSock != INVALID_SOCKET) {
+            closeSocket(ctlSock);
+            ctlSock = INVALID_SOCKET;
+        }
+        else {
+            enet_peer_disconnect_now(peer, 0);
+            peer = NULL;
+            enet_host_destroy(client);
+            client = NULL;
+        }
+
+        return err;
+    }
+
+    err = PltCreateThread("CtrlAsyncCb", asyncCallbackThreadFunc, NULL, &asyncCallbackThread);
+    if (err != 0) {
+        stopping = true;
+        PltSetEvent(&idrFrameRequiredEvent);
+
+        if (ctlSock != INVALID_SOCKET) {
+            shutdownTcpSocket(ctlSock);
+        }
+        else {
+            ConnectionInterrupted = true;
+        }
+
+        PltInterruptThread(&lossStatsThread);
+        PltJoinThread(&lossStatsThread);
+
+        PltInterruptThread(&controlReceiveThread);
+        PltJoinThread(&controlReceiveThread);
+
+        PltInterruptThread(&requestIdrFrameThread);
+        PltJoinThread(&requestIdrFrameThread);
 
         if (ctlSock != INVALID_SOCKET) {
             closeSocket(ctlSock);
@@ -1882,19 +1987,18 @@ int startControlStream(void) {
 
             PltInterruptThread(&lossStatsThread);
             PltJoinThread(&lossStatsThread);
-            PltCloseThread(&lossStatsThread);
 
             PltInterruptThread(&controlReceiveThread);
             PltJoinThread(&controlReceiveThread);
-            PltCloseThread(&controlReceiveThread);
 
             PltInterruptThread(&requestIdrFrameThread);
             PltJoinThread(&requestIdrFrameThread);
-            PltCloseThread(&requestIdrFrameThread);
 
             PltInterruptThread(&asyncCallbackThread);
             PltJoinThread(&asyncCallbackThread);
-            PltCloseThread(&asyncCallbackThread);
+
+            PltInterruptThread(&asyncCallbackThread);
+            PltJoinThread(&asyncCallbackThread);
 
             if (ctlSock != INVALID_SOCKET) {
                 closeSocket(ctlSock);

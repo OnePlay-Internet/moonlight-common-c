@@ -16,6 +16,7 @@ STREAM_CONFIGURATION StreamConfig;
 CONNECTION_LISTENER_CALLBACKS ListenerCallbacks;
 DECODER_RENDERER_CALLBACKS VideoCallbacks;
 AUDIO_RENDERER_CALLBACKS AudioCallbacks;
+AUDIO_CAPTURE_CALLBACKS AudioCaptureCallbacks;
 int NegotiatedVideoFormat;
 volatile bool ConnectionInterrupted;
 bool HighQualitySurroundSupported;
@@ -28,10 +29,15 @@ bool ReferenceFrameInvalidationSupported;
 uint16_t RtspPortNumber;
 uint16_t ControlPortNumber;
 uint16_t AudioPortNumber;
+uint16_t MicPortNumber;
 uint16_t VideoPortNumber;
 SS_PING AudioPingPayload;
 SS_PING VideoPingPayload;
+uint32_t ControlConnectData;
 uint32_t SunshineFeatureFlags;
+uint32_t EncryptionFeaturesSupported;
+uint32_t EncryptionFeaturesRequested;
+uint32_t EncryptionFeaturesEnabled;
 
 // Connection stages
 static const char* stageNames[STAGE_MAX] = {
@@ -81,6 +87,14 @@ void LiStopConnection(void) {
         stage--;
         Limelog("done\n");
     }
+#ifdef MICROPHONE_FEATURE
+    if (stage == STAGE_AUDIO_CAPTURE_STREAM_START) {
+        Limelog("Stopping audio stream...");
+        stopAudioCaptureStream();
+        stage--;
+        Limelog("done\n");
+    }
+#endif
     if (stage == STAGE_VIDEO_STREAM_START) {
         Limelog("Stopping video stream...");
         stopVideoStream();
@@ -121,6 +135,14 @@ void LiStopConnection(void) {
         stage--;
         Limelog("done\n");
     }
+#ifdef MICROPHONE_FEATURE
+    if (stage == STAGE_AUDIO_CAPTURE_STREAM_INIT) {
+        Limelog("Cleaning up audio stream...");
+        destroyAudioCaptureStream();
+        stage--;
+        Limelog("done\n");
+    }
+#endif
     if (stage == STAGE_NAME_RESOLUTION) {
         // Nothing to do
         stage--;
@@ -171,8 +193,8 @@ static void ClInternalConnectionTerminated(int errorCode)
         LC_ASSERT(err == 0);
     }
 
-    // Close the thread handle since we can never wait on it
-    PltCloseThread(&terminationCallbackThread);
+    // Detach the thread since we never wait on it
+    PltDetachThread(&terminationCallbackThread);
 }
 
 static bool parseRtspPortNumberFromUrl(const char* rtspSessionUrl, uint16_t* port)
@@ -204,12 +226,12 @@ static bool parseRtspPortNumberFromUrl(const char* rtspSessionUrl, uint16_t* por
 // Starts the connection to the streaming machine
 #ifdef DYNAMIC_PORTS
 int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION streamConfig, PCONNECTION_LISTENER_CALLBACKS clCallbacks,
-                      PDECODER_RENDERER_CALLBACKS drCallbacks, PAUDIO_RENDERER_CALLBACKS arCallbacks, void* renderContext, int drFlags,
-                      void* audioContext, int arFlags, PORT_DETAILS ports)
+                      PDECODER_RENDERER_CALLBACKS drCallbacks, PAUDIO_RENDERER_CALLBACKS arCallbacks, PAUDIO_CAPTURE_CALLBACKS acCallbacks,
+                      void* renderContext, int drFlags, void* audioContext, int arFlags, PORT_DETAILS ports)
 #else
 int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION streamConfig, PCONNECTION_LISTENER_CALLBACKS clCallbacks,
-                      PDECODER_RENDERER_CALLBACKS drCallbacks, PAUDIO_RENDERER_CALLBACKS arCallbacks, void* renderContext, int drFlags,
-                      void* audioContext, int arFlags)
+                      PDECODER_RENDERER_CALLBACKS drCallbacks, PAUDIO_RENDERER_CALLBACKS arCallbacks, PAUDIO_CAPTURE_CALLBACKS acCallbacks,
+                      void* renderContext, int drFlags, void* audioContext, int arFlags)
 #endif
 {
     int err;
@@ -244,9 +266,10 @@ int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION stre
     }
 
     // Replace missing callbacks with placeholders
-    fixupMissingCallbacks(&drCallbacks, &arCallbacks, &clCallbacks);
+    fixupMissingCallbacks(&drCallbacks, &arCallbacks, &acCallbacks, &clCallbacks);
     memcpy(&VideoCallbacks, drCallbacks, sizeof(VideoCallbacks));
     memcpy(&AudioCallbacks, arCallbacks, sizeof(AudioCallbacks));
+    memcpy(&AudioCaptureCallbacks, acCallbacks, sizeof(AudioCaptureCallbacks));
 
 #ifdef LC_DEBUG_RECORD_MODE
     // Install the pass-through recorder callbacks
@@ -392,17 +415,27 @@ int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION stre
     // now that we have resolved the target address and impose the video packet
     // size cap if required.
     if (StreamConfig.streamingRemotely == STREAM_CFG_AUTO) {
-        if (isPrivateNetworkAddress(&RemoteAddr)) {
+        bool isNat64 = isNat64SynthesizedAddress(&RemoteAddr);
+
+        // It's possible to have a NAT64 prefix on a ULA or other private range,
+        // so we must exclude NAT64 addresses from our local address checks.
+        if (!isNat64 && isPrivateNetworkAddress(&RemoteAddr)) {
             StreamConfig.streamingRemotely = STREAM_CFG_LOCAL;
         }
         else {
             StreamConfig.streamingRemotely = STREAM_CFG_REMOTE;
 
-            if (StreamConfig.packetSize > 1024) {
-                // Cap packet size at 1024 for remote streaming to avoid
-                // MTU problems and fragmentation.
-                Limelog("Packet size capped at 1KB for remote streaming\n");
+            if (RemoteAddr.ss_family == AF_INET || isNat64) {
+                // Cap packet size at 1024 for remote IPv4 streaming to avoid fragmentation.
+                Limelog("Packet size capped at 1024 bytes for remote IPv4 streaming\n");
                 StreamConfig.packetSize = 1024;
+            }
+            else {
+                // IPv6 guarantees a minimum MTU of 1280 before fragmentation, so use a higher
+                // packet size cap for remote IPv6 streaming (when not using NAT64 which isn't
+                // end-to-end IPv6 traffic).
+                Limelog("Packet size capped at 1184 bytes for remote IPv6 streaming\n");
+                StreamConfig.packetSize = 1184;
             }
         }
     }
@@ -427,9 +460,30 @@ int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION stre
     ListenerCallbacks.stageComplete(STAGE_AUDIO_STREAM_INIT);
     Limelog("done\n");
 
+    // -----------Audio capture Stream Init Start-----------
+#ifdef MICROPHONE_FEATURE
+    Limelog("Initializing audio capture stream...");
+    ListenerCallbacks.stageStarting(STAGE_AUDIO_CAPTURE_STREAM_INIT);
+    err = initializeAudioCaptureStream();
+    if (err != 0) {
+        Limelog("failed: %d\n", err);
+        ListenerCallbacks.stageFailed(STAGE_AUDIO_STREAM_INIT, err);
+        goto Cleanup;
+    }
+    stage++;
+    LC_ASSERT(stage == STAGE_AUDIO_CAPTURE_STREAM_INIT);
+    ListenerCallbacks.stageComplete(STAGE_AUDIO_STREAM_INIT);
+    Limelog("done\n");
+#endif
+    // -----------Audio capture Stream init End-----------
+
     Limelog("Starting RTSP handshake...");
     ListenerCallbacks.stageStarting(STAGE_RTSP_HANDSHAKE);
+#ifdef DYNAMIC_PORTS
     err = performRtspHandshake(serverInfo, ports);
+#else
+    err = performRtspHandshake(serverInfo);
+#endif
     if (err != 0) {
         Limelog("failed: %d\n", err);
         ListenerCallbacks.stageFailed(STAGE_RTSP_HANDSHAKE, err);
@@ -508,6 +562,27 @@ int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION stre
     ListenerCallbacks.stageComplete(STAGE_AUDIO_STREAM_START);
     Limelog("done\n");
 
+    // -----------Audio capture Stream Start-----------
+#ifdef MICROPHONE_FEATURE
+    Limelog("Starting audio capture stream...");
+    ListenerCallbacks.stageStarting(STAGE_AUDIO_CAPTURE_STREAM_START);
+    //TODO: check Audio Context and AcFlags
+    err = startAudioCaptureStream(audioContext, arFlags);
+    if (err != 0) {
+        Limelog("Audio Capture stream start failed: %d\n", err);
+        ListenerCallbacks.stageFailed(STAGE_AUDIO_CAPTURE_STREAM_START, err);
+        //goto Cleanup;
+        // TODO: if mic is not present then disable mic streaming for now
+        // TODO: user should be able to select mic/change mic on runtime.
+        // TODO: Mic device object should be created at the start of session
+    }
+    stage++;
+    LC_ASSERT(stage == STAGE_AUDIO_CAPTURE_STREAM_START);
+    ListenerCallbacks.stageComplete(STAGE_AUDIO_CAPTURE_STREAM_START);
+    Limelog("done\n");
+#endif
+    // -----------Audio capture Stream End-----------
+
     Limelog("Starting input stream...");
     ListenerCallbacks.stageStarting(STAGE_INPUT_STREAM_START);
     err = startInputStream();
@@ -535,4 +610,10 @@ Cleanup:
         LiStopConnection();
     }
     return err;
+}
+
+const char* LiGetLaunchUrlQueryParameters(void) {
+    // v0 = Video encryption and control stream encryption v2
+    // v1 = RTSP encryption
+    return "&corever=1";
 }

@@ -28,6 +28,28 @@ AUDIO_RENDERER_CALLBACKS fakeArCallbacks = {
     .decodeAndPlaySample = fakeArDecodeAndPlaySample,
 };
 
+static int fakeAcInit(int audioConfiguration, POPUS_ENCODER_CONFIGURATION opusConfig, void* context, int arFlags) { return 0; }
+static void fakeAcStart(void) {}
+static void fakeAcStop(void) {}
+static void fakeAcCleanup(void) {}
+static bool fakeAcCaptureMic(void* outFrame) {
+    return false;
+}
+static void fakeAcEncode(void* inFrame, int inMaxPayloadSize, void* outEncodedFrame, int* outSize){}
+static void fakeAcTestPlay(void* data, int len){}
+static bool fakeAcIsMuted(void){return true;}
+
+AUDIO_CAPTURE_CALLBACKS fakeAcCallbacks = {
+    .init = fakeAcInit,
+    .start = fakeAcStart,
+    .stop = fakeAcStop,
+    .cleanup = fakeAcCleanup,
+    .captureMic = fakeAcCaptureMic,
+    .encode = fakeAcEncode,
+    .testPlay = fakeAcTestPlay,
+    .isMuted = fakeAcIsMuted
+};
+
 static void fakeClStageStarting(int stage) {}
 static void fakeClStageComplete(int stage) {}
 static void fakeClStageFailed(int stage, int errorCode) {}
@@ -57,7 +79,7 @@ static CONNECTION_LISTENER_CALLBACKS fakeClCallbacks = {
 };
 
 void fixupMissingCallbacks(PDECODER_RENDERER_CALLBACKS* drCallbacks, PAUDIO_RENDERER_CALLBACKS* arCallbacks,
-    PCONNECTION_LISTENER_CALLBACKS* clCallbacks)
+    PAUDIO_CAPTURE_CALLBACKS* acCallbacks, PCONNECTION_LISTENER_CALLBACKS* clCallbacks)
 {
     if (*drCallbacks == NULL) {
         *drCallbacks = &fakeDrCallbacks;
@@ -98,6 +120,36 @@ void fixupMissingCallbacks(PDECODER_RENDERER_CALLBACKS* drCallbacks, PAUDIO_REND
         }
         if ((*arCallbacks)->decodeAndPlaySample == NULL) {
             (*arCallbacks)->decodeAndPlaySample = fakeArDecodeAndPlaySample;
+        }
+    }
+
+    if (*acCallbacks == NULL) {
+        *acCallbacks = &fakeAcCallbacks;
+    }
+    else {
+        if ((*acCallbacks)->init == NULL) {
+            (*acCallbacks)->init = fakeAcInit;
+        }
+        if ((*acCallbacks)->start == NULL) {
+            (*acCallbacks)->start = fakeAcStart;
+        }
+        if ((*acCallbacks)->stop == NULL) {
+            (*acCallbacks)->stop = fakeAcStop;
+        }
+        if ((*acCallbacks)->cleanup == NULL) {
+            (*acCallbacks)->cleanup = fakeAcCleanup;
+        }
+        if((*acCallbacks)->captureMic == NULL){
+            (*acCallbacks)->captureMic = fakeAcCaptureMic;
+        }
+        if ((*acCallbacks)->encode == NULL) {
+            (*acCallbacks)->encode = fakeAcEncode;
+        }
+        if((*acCallbacks)->testPlay == NULL){
+            (*acCallbacks)->testPlay = fakeAcTestPlay;
+        }
+        if((*acCallbacks)->isMuted == NULL){
+            (*acCallbacks)->isMuted = fakeAcIsMuted;
         }
     }
 

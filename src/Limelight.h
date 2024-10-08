@@ -36,7 +36,14 @@ extern "C" {
 // Values for 'encryptionFlags' field below
 #define ENCFLG_NONE  0x00000000
 #define ENCFLG_AUDIO 0x00000001
+#define ENCFLG_VIDEO 0x00000002
 #define ENCFLG_ALL   0xFFFFFFFF
+
+// This function returns a string that you SHOULD append to the /launch and /resume
+// query parameter string. This is used to enable certain extended functionality
+// with Sunshine hosts. The returned string is owned by moonlight-common-c and
+// should not be freed by the caller.
+const char* LiGetLaunchUrlQueryParameters(void);
 
 typedef struct _STREAM_CONFIGURATION {
     // Dimensions in pixels of the desired video stream
@@ -215,17 +222,23 @@ typedef struct _DECODE_UNIT {
 
 // Passed in StreamConfiguration.supportedVideoFormats to specify supported codecs
 // and to DecoderRendererSetup() to specify selected codec.
-#define VIDEO_FORMAT_H264        0x0001 // H.264 High Profile
-#define VIDEO_FORMAT_H265        0x0100 // HEVC Main Profile
-#define VIDEO_FORMAT_H265_MAIN10 0x0200 // HEVC Main10 Profile
-#define VIDEO_FORMAT_AV1_MAIN8   0x1000 // AV1 Main 8-bit profile
-#define VIDEO_FORMAT_AV1_MAIN10  0x2000 // AV1 Main 10-bit profile
+#define VIDEO_FORMAT_H264            0x0001 // H.264 High Profile
+#define VIDEO_FORMAT_H264_HIGH8_444  0x0004 // H.264 High 4:4:4 8-bit Profile
+#define VIDEO_FORMAT_H265            0x0100 // HEVC Main Profile
+#define VIDEO_FORMAT_H265_MAIN10     0x0200 // HEVC Main10 Profile
+#define VIDEO_FORMAT_H265_REXT8_444  0x0400 // HEVC RExt 4:4:4 8-bit Profile
+#define VIDEO_FORMAT_H265_REXT10_444 0x0800 // HEVC RExt 4:4:4 10-bit Profile
+#define VIDEO_FORMAT_AV1_MAIN8       0x1000 // AV1 Main 8-bit profile
+#define VIDEO_FORMAT_AV1_MAIN10      0x2000 // AV1 Main 10-bit profile
+#define VIDEO_FORMAT_AV1_HIGH8_444   0x4000 // AV1 High 4:4:4 8-bit profile
+#define VIDEO_FORMAT_AV1_HIGH10_444  0x8000 // AV1 High 4:4:4 10-bit profile
 
 // Masks for clients to use to match video codecs without profile-specific details.
-#define VIDEO_FORMAT_MASK_H264  0x000F
-#define VIDEO_FORMAT_MASK_H265  0x0F00
-#define VIDEO_FORMAT_MASK_AV1   0xF000
-#define VIDEO_FORMAT_MASK_10BIT 0x2200
+#define VIDEO_FORMAT_MASK_H264   0x000F
+#define VIDEO_FORMAT_MASK_H265   0x0F00
+#define VIDEO_FORMAT_MASK_AV1    0xF000
+#define VIDEO_FORMAT_MASK_10BIT  0xAA00
+#define VIDEO_FORMAT_MASK_YUV444 0xCC04
 
 // If set in the renderer capabilities field, this flag will cause audio/video data to
 // be submitted directly from the receive thread. This should only be specified if the
@@ -326,6 +339,13 @@ typedef struct _OPUS_MULTISTREAM_CONFIGURATION {
     unsigned char mapping[AUDIO_CONFIGURATION_MAX_CHANNEL_COUNT];
 } OPUS_MULTISTREAM_CONFIGURATION, *POPUS_MULTISTREAM_CONFIGURATION;
 
+typedef struct _OPUS_ENCODER_CONFIGURATION {
+    int sampleRate;
+    int channelCount;
+    int Application;
+    int samplesPerFrame;
+} OPUS_ENCODER_CONFIGURATION, *POPUS_ENCODER_CONFIGURATION;
+
 // This callback initializes the audio renderer. The audio configuration parameter
 // provides the negotiated audio configuration. This may differ from the one
 // specified in the stream configuration. Returns 0 on success, non-zero on failure.
@@ -355,8 +375,65 @@ typedef struct _AUDIO_RENDERER_CALLBACKS {
 // Use this function to zero the audio callbacks when allocated on the stack or heap
 void LiInitializeAudioCallbacks(PAUDIO_RENDERER_CALLBACKS arCallbacks);
 
+// This callback initializes the audio renderer. The audio configuration parameter
+// provides the negotiated audio configuration. This may differ from the one
+// specified in the stream configuration. Returns 0 on success, non-zero on failure.
+typedef int(*AudioCaptureInit)(int audioConfiguration, const POPUS_ENCODER_CONFIGURATION opusConfig, void* context, int arFlags);
+
+// This callback notifies the decoder that the stream is starting. No audio can be submitted before this callback returns.
+typedef void(*AudioCaptureStart)(void);
+
+// This callback notifies the decoder that the stream is stopping. Audio samples may still be submitted but they may be safely discarded.
+typedef void(*AudioCaptureStop)(void);
+
+// This callback performs the final teardown of the audio decoder. No additional audio will be submitted when this callback is invoked.
+typedef void(*AudioCaptureCleanup)(void);
+
+// This callback provides Opus audio data to be decoded and played. sampleLength is in bytes.
+//typedef void*(*AudioCaptureGetEncodedSample)(int* outLen);
+typedef bool(*AudioCaptureMic)(void* outSample);
+
+typedef void(*AudioCaptureEncode)(void* inFrame, int inMaxPayloadSize, void* outEncodedFrame, int* outSize);
+
+typedef void(*AudioCaptureTestPlayback)(void* data, int len);
+
+typedef bool(*AudioCaptureIsMuted)(void);
+
+typedef struct _AUDIO_CAPTURE_CALLBACKS {
+    AudioCaptureInit init;
+    AudioCaptureStart start;
+    AudioCaptureStop stop;
+    AudioCaptureCleanup cleanup;
+    AudioCaptureMic captureMic;
+    AudioCaptureEncode encode;
+    AudioCaptureTestPlayback testPlay;
+    AudioCaptureIsMuted isMuted;
+    int capabilities;
+} AUDIO_CAPTURE_CALLBACKS, *PAUDIO_CAPTURE_CALLBACKS;
+
+// Use this function to zero the audio callbacks when allocated on the stack or heap
+void LiInitializeAudioCaptureCallbacks(PAUDIO_CAPTURE_CALLBACKS acCallbacks);
+
 // Subject to change in future releases
 // Use LiGetStageName() for stable stage names
+
+#ifdef MICROPHONE_FEATURE
+#define STAGE_NONE 0
+#define STAGE_PLATFORM_INIT 1
+#define STAGE_NAME_RESOLUTION 2
+#define STAGE_AUDIO_STREAM_INIT 3
+#define STAGE_AUDIO_CAPTURE_STREAM_INIT 4
+#define STAGE_RTSP_HANDSHAKE 5
+#define STAGE_CONTROL_STREAM_INIT 6
+#define STAGE_VIDEO_STREAM_INIT 7
+#define STAGE_INPUT_STREAM_INIT 8
+#define STAGE_CONTROL_STREAM_START 9
+#define STAGE_VIDEO_STREAM_START 10
+#define STAGE_AUDIO_STREAM_START 11
+#define STAGE_AUDIO_CAPTURE_STREAM_START 12
+#define STAGE_INPUT_STREAM_START 13
+#define STAGE_MAX 14
+#else
 #define STAGE_NONE 0
 #define STAGE_PLATFORM_INIT 1
 #define STAGE_NAME_RESOLUTION 2
@@ -370,7 +447,7 @@ void LiInitializeAudioCallbacks(PAUDIO_RENDERER_CALLBACKS arCallbacks);
 #define STAGE_AUDIO_STREAM_START 10
 #define STAGE_INPUT_STREAM_START 11
 #define STAGE_MAX 12
-
+#endif
 // This callback is invoked to indicate that a stage of initialization is about to begin
 typedef void(*ConnListenerStageStarting)(int stage);
 
@@ -482,17 +559,23 @@ typedef struct _CONNECTION_LISTENER_CALLBACKS {
 void LiInitializeConnectionCallbacks(PCONNECTION_LISTENER_CALLBACKS clCallbacks);
 
 // ServerCodecModeSupport values
-#define SCM_H264        0x00001
-#define SCM_HEVC        0x00100
-#define SCM_HEVC_MAIN10 0x00200
-#define SCM_AV1_MAIN8   0x10000 // Sunshine extension
-#define SCM_AV1_MAIN10  0x20000 // Sunshine extension
+#define SCM_H264            0x00000001
+#define SCM_HEVC            0x00000100
+#define SCM_HEVC_MAIN10     0x00000200
+#define SCM_AV1_MAIN8       0x00010000 // Sunshine extension
+#define SCM_AV1_MAIN10      0x00020000 // Sunshine extension
+#define SCM_H264_HIGH8_444  0x00040000 // Sunshine extension
+#define SCM_HEVC_REXT8_444  0x00080000 // Sunshine extension
+#define SCM_HEVC_REXT10_444 0x00100000 // Sunshine extension
+#define SCM_AV1_HIGH8_444   0x00200000 // Sunshine extension
+#define SCM_AV1_HIGH10_444  0x00400000 // Sunshine extension
 
 // SCM masks to identify various codec capabilities
-#define SCM_MASK_H264   SCM_H264
-#define SCM_MASK_HEVC   (SCM_HEVC | SCM_HEVC_MAIN10)
-#define SCM_MASK_AV1    (SCM_AV1_MAIN8 | SCM_AV1_MAIN10)
-#define SCM_MASK_10BIT  (SCM_HEVC_MAIN10 | SCM_AV1_MAIN10)
+#define SCM_MASK_H264   (SCM_H264 | SCM_H264_HIGH8_444)
+#define SCM_MASK_HEVC   (SCM_HEVC | SCM_HEVC_MAIN10 | SCM_HEVC_REXT8_444 | SCM_HEVC_REXT10_444)
+#define SCM_MASK_AV1    (SCM_AV1_MAIN8 | SCM_AV1_MAIN10 | SCM_AV1_HIGH8_444 | SCM_AV1_HIGH10_444)
+#define SCM_MASK_10BIT  (SCM_HEVC_MAIN10 | SCM_HEVC_REXT10_444 | SCM_AV1_MAIN10 | SCM_AV1_HIGH10_444)
+#define SCM_MASK_YUV444 (SCM_H264_HIGH8_444 | SCM_HEVC_REXT8_444 | SCM_HEVC_REXT10_444 | SCM_AV1_HIGH8_444 | SCM_AV1_HIGH10_444)
 
 typedef struct _SERVER_INFORMATION {
     // Server host name or IP address in text form
@@ -523,12 +606,12 @@ void LiInitializeServerInformation(PSERVER_INFORMATION serverInfo);
 //
 #ifdef DYNAMIC_PORTS
 int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION streamConfig, PCONNECTION_LISTENER_CALLBACKS clCallbacks,
-                      PDECODER_RENDERER_CALLBACKS drCallbacks, PAUDIO_RENDERER_CALLBACKS arCallbacks, void* renderContext, int drFlags,
-                      void* audioContext, int arFlags, PORT_DETAILS ports);
+                      PDECODER_RENDERER_CALLBACKS drCallbacks, PAUDIO_RENDERER_CALLBACKS arCallbacks, PAUDIO_CAPTURE_CALLBACKS,
+                      void* renderContext, int drFlags, void* audioContext, int arFlags, PORT_DETAILS ports);
 #else
 int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION streamConfig, PCONNECTION_LISTENER_CALLBACKS clCallbacks,
-                      PDECODER_RENDERER_CALLBACKS drCallbacks, PAUDIO_RENDERER_CALLBACKS arCallbacks, void* renderContext, int drFlags,
-                      void* audioContext, int arFlags);
+                      PDECODER_RENDERER_CALLBACKS drCallbacks, PAUDIO_RENDERER_CALLBACKS arCallbacks, PAUDIO_CAPTURE_CALLBACKS acCallbacks,
+                      void* renderContext, int drFlags, void* audioContext, int arFlags);
 #endif
 
 // This function stops streaming. This function is not thread-safe.
@@ -815,6 +898,8 @@ int LiSendHighResScrollEvent(short scrollAmount);
 // This is a Sunshine protocol extension.
 int LiSendHScrollEvent(signed char scrollClicks);
 int LiSendHighResHScrollEvent(short scrollAmount);
+
+int LiSendMicToggleEvent(bool isMuted);
 
 // This function returns a time in milliseconds with an implementation-defined epoch.
 uint64_t LiGetMillis(void);
