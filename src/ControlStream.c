@@ -1935,41 +1935,6 @@ int startControlStream(void) {
         return err;
     }
 
-    err = PltCreateThread("CtrlAsyncCb", asyncCallbackThreadFunc, NULL, &asyncCallbackThread);
-    if (err != 0) {
-        stopping = true;
-        PltSetEvent(&idrFrameRequiredEvent);
-
-        if (ctlSock != INVALID_SOCKET) {
-            shutdownTcpSocket(ctlSock);
-        }
-        else {
-            ConnectionInterrupted = true;
-        }
-
-        PltInterruptThread(&lossStatsThread);
-        PltJoinThread(&lossStatsThread);
-
-        PltInterruptThread(&controlReceiveThread);
-        PltJoinThread(&controlReceiveThread);
-
-        PltInterruptThread(&requestIdrFrameThread);
-        PltJoinThread(&requestIdrFrameThread);
-
-        if (ctlSock != INVALID_SOCKET) {
-            closeSocket(ctlSock);
-            ctlSock = INVALID_SOCKET;
-        }
-        else {
-            enet_peer_disconnect_now(peer, 0);
-            peer = NULL;
-            enet_host_destroy(client);
-            client = NULL;
-        }
-
-        return err;
-    }
-
     // Only create the reference frame invalidation thread if RFI is enabled
     if (isReferenceFrameInvalidationEnabled()) {
         err = PltCreateThread("InvRefFrames", invalidateRefFramesFunc, NULL, &invalidateRefFramesThread);
@@ -1993,9 +1958,6 @@ int startControlStream(void) {
 
             PltInterruptThread(&requestIdrFrameThread);
             PltJoinThread(&requestIdrFrameThread);
-
-            PltInterruptThread(&asyncCallbackThread);
-            PltJoinThread(&asyncCallbackThread);
 
             PltInterruptThread(&asyncCallbackThread);
             PltJoinThread(&asyncCallbackThread);
