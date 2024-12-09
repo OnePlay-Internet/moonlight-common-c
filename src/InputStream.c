@@ -1309,7 +1309,27 @@ int LiSendTouchEvent(uint8_t eventType, uint32_t pointerId, float x, float y, fl
     if (!initialized) {
         return -2;
     }
-
+//#define LOG_TOUCH
+#ifdef LOG_TOUCH
+    char* EventString = "";
+    switch(eventType)
+    {
+    case LI_TOUCH_EVENT_DOWN:
+        EventString = "DownEvent";
+        break;
+    case LI_TOUCH_EVENT_UP:
+        EventString = "UpEvent";
+        break;
+    case LI_TOUCH_EVENT_MOVE:
+        EventString = "MoveEvent";
+        break;
+    default:
+        EventString = "Unknown";
+        break;
+    }
+    Limelog("%s|PointerID:%d|x:%f|y:%f|Rotation:%f",
+            EventString, pointerId, x, y, rotation);
+#endif
     // This is a protocol extension only supported with Sunshine
     if (!(SunshineFeatureFlags & LI_FF_PEN_TOUCH_EVENTS)) {
         return LI_ERR_UNSUPPORTED;
