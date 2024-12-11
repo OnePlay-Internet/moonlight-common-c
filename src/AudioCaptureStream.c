@@ -1,6 +1,5 @@
 #include "Limelight-internal.h"
 #include <opus_defines.h>
-#include <WinSock2.h>
 #include <opus.h>
 
 #ifdef ENABLE_AUDIO_LATENCY_MONITOR
@@ -195,21 +194,10 @@ int initializeAudioCaptureStream(void) {
     audioDecryptionCtx = PltCreateCryptoContext();
 #endif
 
-    //-- Init Sock --
-    WSADATA wsaData;
-
-    // Initialize Winsock
-    if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
-        printf("WSAStartup failed: %d\n", WSAGetLastError());
-        return 1;
-    }
-
     // Create socket
-    sockMic = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    sockMic = bindUdpSocket(RemoteAddr.ss_family, &LocalAddr, AddrLen, 0, SOCK_QOS_TYPE_AUDIO);
     if (sockMic == INVALID_SOCKET) {
-        printf("Socket creation failed: %d\n", WSAGetLastError());
-        WSACleanup();
-        return 1;
+        return LastSocketFail();
     }
 
     // Set server address
@@ -356,7 +344,7 @@ bool sendRtpMicPacket(PAUDIO_PACKET_HOLDER holder, PENCODED_AUDIO_PAYLOAD_HOLDER
     }
 #endif
 
-    memcpy_s(&holder->data.payload[0], 2000, &payload->data[0], payload->header.size );
+    memcpy(&holder->data.payload[0], &payload->data[0], payload->header.size );
 
 #ifdef FEC_DEBUG_DROP_CHECK
     if ((/*seqNumber % 2 == 0 ||*/ seqNumber % 3 == 0) && seqNumber % 10 != 0) {
@@ -389,13 +377,6 @@ bool sendRtpMicPacket(PAUDIO_PACKET_HOLDER holder, PENCODED_AUDIO_PAYLOAD_HOLDER
 
 #endif
 
-    if (sentBytes == SOCKET_ERROR) {
-        Limelog("Failed to send message: %d\n", WSAGetLastError());
-        closesocket(sockMic);
-        WSACleanup();
-        return false;
-    }
-
 #ifdef RTP_DEBUG
     // saving 10 sec of rtp packet to file for sunshine test
     if(seqNumber<=1000)
@@ -408,7 +389,8 @@ bool sendRtpMicPacket(PAUDIO_PACKET_HOLDER holder, PENCODED_AUDIO_PAYLOAD_HOLDER
     }
 #endif
 
-    memcpy_s(&holder->data.payload[0], MAX_PAYLOAD_SIZE, shards_p[seqNumber % RTPA_DATA_SHARDS], payload->header.size);
+    memcpy(&holder->data.payload[0],shards_p[seqNumber % RTPA_DATA_SHARDS], payload->header.size);
+
 
     if (seqNumber % RTPA_DATA_SHARDS == 0) {
         fec_packet->fecHeader.baseSequenceNumber = BE16(seqNumber);
@@ -457,13 +439,6 @@ bool sendRtpMicPacket(PAUDIO_PACKET_HOLDER holder, PENCODED_AUDIO_PAYLOAD_HOLDER
             Limelog("Audio FEC [%d] :: %d :: send...", (seqNumber & ~(RTPA_DATA_SHARDS - 1)) ,x );
             Limelog("Audio Packet type:: %d | FEC Type:: %d", fec_packet->rtp.packetType, fec_packet->fecHeader.payloadType );
 #endif
-
-            if (sentBytes == SOCKET_ERROR) {
-                Limelog("Failed to send FEC: %d\n", WSAGetLastError());
-                closesocket(sockMic);
-                WSACleanup();
-                return false;
-            }
         }
     }
 
