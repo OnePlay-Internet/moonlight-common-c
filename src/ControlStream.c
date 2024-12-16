@@ -120,7 +120,7 @@ static PPLT_CRYPTO_CONTEXT decryptionCtx;
 #define IDX_SET_RGB_LED 11
 #define IDX_TOGGLE_MIC 12
 
-#define CONTROL_STREAM_TIMEOUT_SEC 10
+#define CONTROL_STREAM_TIMEOUT_SEC 30
 #define CONTROL_STREAM_LINGER_TIMEOUT_SEC 2
 
 static const short packetTypesGen3[] = {
