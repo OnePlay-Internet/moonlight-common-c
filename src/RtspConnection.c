@@ -1195,7 +1195,9 @@ int performRtspHandshake(PSERVER_INFORMATION serverInfo) {
         notifyAudioPortNegotiationComplete();
 
         //
+        #ifdef Q_OS_WIN32
         notifyAudioCapturePortNegotiationComplete();
+        #endif
 
         sessionId = getOptionContent(response.options, "Session");
 
