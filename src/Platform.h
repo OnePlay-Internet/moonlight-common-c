@@ -70,9 +70,13 @@
 #include <stdio.h>
 #include "Limelight.h"
 
+// Works with both Windows and Unix-style paths
+#define __FILENAME__ (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : \
+                     (strrchr(__FILE__, '\\') ? strrchr(__FILE__, '\\') + 1 : __FILE__))
+
 #define Limelog(s, ...) \
     if (ListenerCallbacks.logMessage) \
-        ListenerCallbacks.logMessage(s, ##__VA_ARGS__)
+        ListenerCallbacks.logMessage("Limelog [%s:%d][%s] " s, __FILENAME__, __LINE__, __func__, ##__VA_ARGS__)
 
 #if defined(LC_WINDOWS)
 #include <crtdbg.h>

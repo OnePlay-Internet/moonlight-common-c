@@ -114,6 +114,7 @@ static void dropFrameState(void) {
     consecutiveFrameDrops++;
 
     // If we reach our limit, immediately request an IDR frame and reset
+    //TODO(Owais): Usefull callback for ADP. Lower bitrate when packets are dropped.
     if (consecutiveFrameDrops == CONSECUTIVE_DROP_LIMIT) {
         Limelog("Reached consecutive drop limit\n");
 
@@ -644,6 +645,7 @@ static void queueFragment(PLENTRY_INTERNAL* existingEntry, char* data, int offse
 }
 
 // Process an RTP Payload using the slow path that handles multiple NALUs per packet
+// TODO(Owais): Possible room for Optimization here.
 static void processAvcHevcRtpPayloadSlow(PBUFFER_DESC currentPos, PLENTRY_INTERNAL* existingEntry) {
     // We should not have any NALUs when processing the first packet in an IDR frame
     LC_ASSERT(nalChainHead == NULL);
@@ -673,6 +675,7 @@ static void processAvcHevcRtpPayloadSlow(PBUFFER_DESC currentPos, PLENTRY_INTERN
             // No longer waiting for an IDR frame
             waitingForIdrFrame = false;
             waitingForRefInvalFrame = false;
+            Limelog("Got IDR Frame");
 
             // Cancel any pending IDR frame request
             waitingForNextSuccessfulFrame = false;
@@ -854,6 +857,8 @@ static void processRtpPayload(PNV_VIDEO_PACKET videoPacket, int length,
                     waitingForIdrFrame = false;
                     waitingForNextSuccessfulFrame = false;
                     frameType = FRAME_TYPE_IDR;
+
+                    Limelog("Got IDR Frame");
                 }
                 // Fall-through
             case 4: // Intra-refresh
