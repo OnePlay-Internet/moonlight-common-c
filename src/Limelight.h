@@ -39,6 +39,12 @@ extern "C" {
 #define ENCFLG_VIDEO 0x00000002
 #define ENCFLG_ALL   0xFFFFFFFF
 
+// This function returns a string that you SHOULD append to the /launch and /resume
+// query parameter string. This is used to enable certain extended functionality
+// with Sunshine hosts. The returned string is owned by moonlight-common-c and
+// should not be freed by the caller.
+const char* LiGetLaunchUrlQueryParameters(void);
+
 typedef struct _STREAM_CONFIGURATION {
     // Dimensions in pixels of the desired video stream
     int width;
@@ -67,7 +73,7 @@ typedef struct _STREAM_CONFIGURATION {
     // Specifies the channel configuration of the audio stream.
     // See AUDIO_CONFIGURATION constants and MAKE_AUDIO_CONFIGURATION() below.
     int audioConfiguration;
-    
+
     // Specifies the mask of supported video formats.
     // See VIDEO_FORMAT constants below.
     int supportedVideoFormats;
@@ -574,10 +580,10 @@ void LiInitializeConnectionCallbacks(PCONNECTION_LISTENER_CALLBACKS clCallbacks)
 typedef struct _SERVER_INFORMATION {
     // Server host name or IP address in text form
     const char* address;
-    
+
     // Text inside 'appversion' tag in /serverinfo
     const char* serverInfoAppVersion;
-    
+
     // Text inside 'GfeVersion' tag in /serverinfo (if present)
     const char* serverInfoGfeVersion;
 
@@ -795,7 +801,7 @@ int LiSendUtf8TextEvent(const char *text, unsigned int length);
 // This function queues a controller event to be sent to the remote server. It will
 // be seen by the computer as the first controller.
 int LiSendControllerEvent(int buttonFlags, unsigned char leftTrigger, unsigned char rightTrigger,
-    short leftStickX, short leftStickY, short rightStickX, short rightStickY);
+                          short leftStickX, short leftStickY, short rightStickX, short rightStickY);
 
 // This function queues a controller event to be sent to the remote server. The controllerNumber
 // parameter is a zero-based index of which controller this event corresponds to. The largest legal
@@ -814,8 +820,8 @@ int LiSendControllerEvent(int buttonFlags, unsigned char leftTrigger, unsigned c
 // To indicate removal of a gamepad, send an empty event with the controller number set to the
 // removed controller and the bit of the removed controller cleared in the active gamepad mask.
 int LiSendMultiControllerEvent(short controllerNumber, short activeGamepadMask,
-    int buttonFlags, unsigned char leftTrigger, unsigned char rightTrigger,
-    short leftStickX, short leftStickY, short rightStickX, short rightStickY);
+                               int buttonFlags, unsigned char leftTrigger, unsigned char rightTrigger,
+                               short leftStickX, short leftStickY, short rightStickX, short rightStickY);
 
 // This function provides a method of informing the host of the available buttons and capabilities
 // on a new controller. This is the recommended approach for indicating the arrival of a new controller.
