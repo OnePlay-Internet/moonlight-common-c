@@ -185,6 +185,9 @@ static void ClInternalConnectionTerminated(int errorCode)
     terminationCallbackErrorCode = errorCode;
     alreadyTerminated = true;
 
+    //TODO (Owais): Currently Logs are called on the seperate thread which doesn't show stack trace in sentry.
+    //Move the SDL_LOG_ERROR here instead.
+
     // Invoke the termination callback on a separate thread
     err = PltCreateThread("AsyncTerm", terminationCallbackThreadFunc, NULL, &terminationCallbackThread);
     if (err != 0) {

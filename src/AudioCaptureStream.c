@@ -341,20 +341,20 @@ bool sendRtpMicPacket(PAUDIO_PACKET_HOLDER holder, PENCODED_AUDIO_PAYLOAD_HOLDER
     Limelog("Encoded data Size: %d", payload->header.size);
 #endif
 
-#ifndef DISABLE_MIC_ENCRYPTION
+// #ifndef DISABLE_MIC_ENCRYPTION
 
-    if(AudioEncryptionEnabled)
-    {
-      // TODO: encrypt based on conf file
-      int err = encryptAudio(
-          (unsigned char *)(&payload->data[0]), payload->header.size,
-          (unsigned char *)(&payload->data[0]), &payload->header.size);
+//     if(AudioEncryptionEnabled)
+//     {
+//       // TODO: encrypt based on conf file
+//       int err = encryptAudio(
+//           (unsigned char *)(&payload->data[0]), payload->header.size,
+//           (unsigned char *)(&payload->data[0]), &payload->header.size);
 
-      if (err == -1) {
-        Limelog("Mic Audio Encryption Failed : %d", err);
-      }
-    }
-#endif
+//       if (err == -1) {
+//         Limelog("Mic Audio Encryption Failed : %d", err);
+//       }
+//     }
+// #endif
 
     memcpy_s(&holder->data.payload[0], 2000, &payload->data[0], payload->header.size );
 
