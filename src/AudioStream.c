@@ -425,16 +425,16 @@ int startAudioStream(void* audioContext, int arFlags) {
     OPUS_MULTISTREAM_CONFIGURATION chosenConfig;
 
 //If Microphone is enabled then we stop ping thread handle sending audio ping packets using AudioCaptureStream
-// #ifdef MICROPHONE_FEATURE
-    if (arFlags & FLAG_MIC_ENABLED) {
-        if (pingThreadStarted) {
-            PltInterruptThread(&udpPingThread);
-            PltJoinThread(&udpPingThread);
-            pingThreadStarted = false;
-        }
-        startAudioCaptureStream(audioContext, rtpSocket);
-    }
-// #endif
+// // #ifdef MICROPHONE_FEATURE
+//     if (arFlags & FLAG_MIC_ENABLED) {
+//         if (pingThreadStarted) {
+//             PltInterruptThread(&udpPingThread);
+//             PltJoinThread(&udpPingThread);
+//             pingThreadStarted = false;
+//         }
+//         startAudioCaptureStream(audioContext, rtpSocket);
+//     }
+// // #endif
 
     if (HighQualitySurroundEnabled) {
         LC_ASSERT(HighQualitySurroundSupported);

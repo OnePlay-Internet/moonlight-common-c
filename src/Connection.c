@@ -88,12 +88,12 @@ void LiStopConnection(void) {
         Limelog("done\n");
     }
 #ifdef MICROPHONE_FEATURE
-    if (stage == STAGE_AUDIO_CAPTURE_STREAM_START) {
-        Limelog("Stopping audio stream...");
-        stopAudioCaptureStream();
-        stage--;
-        Limelog("done\n");
-    }
+    // if (stage == STAGE_AUDIO_CAPTURE_STREAM_START) {
+    //     Limelog("Stopping audio stream...");
+    //     stopAudioCaptureStream();
+    //     stage--;
+    //     Limelog("done\n");
+    // }
 #endif
     if (stage == STAGE_VIDEO_STREAM_START) {
         Limelog("Stopping video stream...");
@@ -136,12 +136,12 @@ void LiStopConnection(void) {
         Limelog("done\n");
     }
 #ifdef MICROPHONE_FEATURE
-    if (stage == STAGE_AUDIO_CAPTURE_STREAM_INIT) {
-        Limelog("Cleaning up audio stream...");
-        destroyAudioCaptureStream();
-        stage--;
-        Limelog("done\n");
-    }
+    // if (stage == STAGE_AUDIO_CAPTURE_STREAM_INIT) {
+    //     Limelog("Cleaning up audio stream...");
+    //     destroyAudioCaptureStream();
+    //     stage--;
+    //     Limelog("done\n");
+    // }
 #endif
     if (stage == STAGE_NAME_RESOLUTION) {
         // Nothing to do
@@ -465,18 +465,18 @@ int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION stre
 
     // -----------Audio capture Stream Init Start-----------
 #ifdef MICROPHONE_FEATURE
-    Limelog("Initializing audio capture stream...");
-    ListenerCallbacks.stageStarting(STAGE_AUDIO_CAPTURE_STREAM_INIT);
-    err = initializeAudioCaptureStream();
-    if (err != 0) {
-        Limelog("failed: %d\n", err);
-        ListenerCallbacks.stageFailed(STAGE_AUDIO_STREAM_INIT, err);
-        goto Cleanup;
-    }
-    stage++;
-    LC_ASSERT(stage == STAGE_AUDIO_CAPTURE_STREAM_INIT);
-    ListenerCallbacks.stageComplete(STAGE_AUDIO_STREAM_INIT);
-    Limelog("done\n");
+    // Limelog("Initializing audio capture stream...");
+    // ListenerCallbacks.stageStarting(STAGE_AUDIO_CAPTURE_STREAM_INIT);
+    // err = initializeAudioCaptureStream();
+    // if (err != 0) {
+    //     Limelog("failed: %d\n", err);
+    //     ListenerCallbacks.stageFailed(STAGE_AUDIO_STREAM_INIT, err);
+    //     goto Cleanup;
+    // }
+    // stage++;
+    // LC_ASSERT(stage == STAGE_AUDIO_CAPTURE_STREAM_INIT);
+    // ListenerCallbacks.stageComplete(STAGE_AUDIO_STREAM_INIT);
+    // Limelog("done\n");
 #endif
     // -----------Audio capture Stream init End-----------
 
