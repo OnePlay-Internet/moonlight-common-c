@@ -35,6 +35,7 @@ typedef struct _QUEUED_AUDIO_PACKET {
     char data[MAX_PACKET_SIZE];
 } QUEUED_AUDIO_PACKET, *PQUEUED_AUDIO_PACKET;
 
+//Owais: This thread is useless so we will use it for streaming mic
 static void AudioPingThreadProc(void* context) {
     char legacyPingData[] = { 0x50, 0x49, 0x4E, 0x47 };
     LC_SOCKADDR saddr;
@@ -422,6 +423,18 @@ void stopAudioStream(void) {
 int startAudioStream(void* audioContext, int arFlags) {
     int err;
     OPUS_MULTISTREAM_CONFIGURATION chosenConfig;
+
+//If Microphone is enabled then we stop ping thread handle sending audio ping packets using AudioCaptureStream
+// #ifdef MICROPHONE_FEATURE
+    if (arFlags & FLAG_MIC_ENABLED) {
+        if (pingThreadStarted) {
+            PltInterruptThread(&udpPingThread);
+            PltJoinThread(&udpPingThread);
+            pingThreadStarted = false;
+        }
+        startAudioCaptureStream(audioContext, rtpSocket);
+    }
+// #endif
 
     if (HighQualitySurroundEnabled) {
         LC_ASSERT(HighQualitySurroundSupported);

@@ -41,7 +41,8 @@ static uint32_t avRiKeyId;
 #define BITRATE_MS_126 15750/1000
 #define MAX_PAYLOAD_SIZE BITRATE_MS_126 * AUDIO_CAPTURE_FRAME_DURATION
 
-#define FRAME_SAMPLE_COUNT AUDIO_CAPTURE_FRAME_DURATION * 16
+#define FREQ 48000
+#define FRAME_SAMPLE_COUNT AUDIO_CAPTURE_FRAME_DURATION * (FREQ/1000)
 
 typedef struct _RAW_FRAME_HOLDER {
     LINKED_BLOCKING_QUEUE_ENTRY entry;
@@ -489,39 +490,33 @@ void freePacketList(PLINKED_BLOCKING_QUEUE_ENTRY entry)
 }
 void audioCaptureThreadProc(void* context){
     int err = 0;
-    PRAW_FRAME_HOLDER holder;
     isMicToggled = false;
+    uint16_t CapturedFrame[FRAME_SAMPLE_COUNT * 100];
 
     while (!PltIsThreadInterrupted(&captureThread))
     {
         bool isMicMuted = AudioCaptureCallbacks.isMuted();
         if(isMicMuted)
         {
-            PltSleepMs(1500);
+            PltSleepMs(500);
             continue;
         }
         else{
-            holder = allocateHolder(0, &rawFreeFrameList, sizeof(RAW_FRAME_HOLDER));
-            if(holder == NULL){
-                Limelog("Null holder in capture thread: %d", err);
-                return;
-            }
-
 #ifdef ENABLE_AUDIO_LATENCY_MONITOR
             QueryPerformanceCounter(&holder->timeStamp);
 #endif
-            if(AudioCaptureCallbacks.captureMic(holder->frame)){
-                err = LbqOfferQueueItem(&rawFrameQueue, holder, &holder->entry);
+            // if(AudioCaptureCallbacks.captureMic(holder->frame)){
+            //     err = LbqOfferQueueItem(&rawFrameQueue, holder, &holder->entry);
 
-                if (err != LBQ_SUCCESS) {
-                    if(err == LBQ_BOUND_EXCEEDED){
-                        Limelog("Mic capture queue reached maximum size limit\n");
-                        // The packet queue is full, so free all existing items
-                        freePacketList(LbqFlushQueueItems(&rawFrameQueue));
-                    }
-                    freeRawFrameHolder(holder);
-                }
-            }
+            //     if (err != LBQ_SUCCESS) {
+            //         if(err == LBQ_BOUND_EXCEEDED){
+            //             Limelog("Mic capture queue reached maximum size limit\n");
+            //             // The packet queue is full, so free all existing items
+            //             freePacketList(LbqFlushQueueItems(&rawFrameQueue));
+            //         }
+            //         freeRawFrameHolder(holder);
+            //     }
+            // }
         }
     }
 }
@@ -652,30 +647,33 @@ void destroyAudioCaptureStream(void){
 #endif
 }
 
-int startAudioCaptureStream(void* audioCaptureContext, int arFlags)
+int startAudioCaptureStream(void* audioCaptureContext, int rtpsocket)
 {
     int err;
     OPUS_ENCODER_CONFIGURATION chosenConfig;
-    chosenConfig.sampleRate = 16000;
+    chosenConfig.sampleRate = FREQ;
     chosenConfig.channelCount = 1;
-    chosenConfig.samplesPerFrame = (chosenConfig.sampleRate/1000) * AUDIO_CAPTURE_FRAME_DURATION;
+    chosenConfig.samplesPerFrame = FRAME_SAMPLE_COUNT;
     chosenConfig.Application = OPUS_APPLICATION_VOIP;//TODO: check quality
 
-    err = AudioCaptureCallbacks.init(StreamConfig.audioConfiguration, &chosenConfig, audioCaptureContext, arFlags);
+    err = AudioCaptureCallbacks.init(StreamConfig.audioConfiguration, &chosenConfig, audioCaptureContext, 0);
     if (err != 0) {
         return err;
     }
 
     AudioCaptureCallbacks.start();
 
-    err = PltCreateThread("AudioCapSend", audioCaptureThreadProc, NULL, &captureThread);
-    if (err != 0) {
-        AudioCaptureCallbacks.stop();
-        closeSocket(sockMic);
-        AudioCaptureCallbacks.cleanup();
-        return err;
-    }
+    
+    // err = PltCreateThread("AudioCapSend", audioCaptureThreadProc, NULL, &captureThread);
+    // if (err != 0) {
+    //     AudioCaptureCallbacks.stop();
+    //     closeSocket(sockMic);
+    //     AudioCaptureCallbacks.cleanup();
+    //     return err;
+    // }
 
+    /*
+    //Make Encoding and sending happen on same capture thread. 
     err = PltCreateThread("AudioEnc", audioEncodeThreadProc , NULL, &encoderThread);
     if (err != 0) {
         AudioCaptureCallbacks.stop();
@@ -701,6 +699,7 @@ int startAudioCaptureStream(void* audioCaptureContext, int arFlags)
         AudioCaptureCallbacks.cleanup();
         return err;
     }
+    */
     return 0;
 }
 
@@ -719,10 +718,10 @@ void stopAudioCaptureStream(void)
         PltInterruptThread(&encoderThread);
     }
 
-    PltJoinThread(&senderThread);
+    // PltJoinThread(&senderThread);
     if ((AudioCaptureCallbacks.capabilities & CAPABILITY_DIRECT_SUBMIT) == 0) {
-        PltJoinThread(&captureThread);
-        PltJoinThread(&encoderThread);
+        // PltJoinThread(&captureThread);
+        // PltJoinThread(&encoderThread);
     }
 
     //PltCloseThread(&senderThread);

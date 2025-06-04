@@ -168,13 +168,14 @@ void destroyAudioStream(void);
 int startAudioStream(void* audioContext, int arFlags);
 void stopAudioStream(void);
 
-#ifdef Q_OS_WIN32
+#define FLAG_MIC_ENABLED (1 << 0)
+// #ifdef Q_OS_WIN32
 int initializeAudioCaptureStream(void);
 int notifyAudioCapturePortNegotiationComplete(void);
 void destroyAudioCaptureStream(void);
 int startAudioCaptureStream(void* audioCaptureContext, int arFlags);
 void stopAudioCaptureStream(void);
-#endif
+// #endif
 
 int initializeInputStream(void);
 void destroyInputStream(void);

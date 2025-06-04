@@ -375,6 +375,8 @@ typedef struct _AUDIO_RENDERER_CALLBACKS {
 // Use this function to zero the audio callbacks when allocated on the stack or heap
 void LiInitializeAudioCallbacks(PAUDIO_RENDERER_CALLBACKS arCallbacks);
 
+//Arflag to enable Microphone
+#define FLAG_MIC_ENABLED (1 << 0)
 // This callback initializes the audio renderer. The audio configuration parameter
 // provides the negotiated audio configuration. This may differ from the one
 // specified in the stream configuration. Returns 0 on success, non-zero on failure.
