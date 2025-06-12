@@ -32,7 +32,7 @@ static int fakeAcInit(int audioConfiguration, POPUS_ENCODER_CONFIGURATION opusCo
 static void fakeAcStart(void) {}
 static void fakeAcStop(void) {}
 static void fakeAcCleanup(void) {}
-static bool fakeAcCaptureMic(void* outFrame) {
+static bool fakeAcCaptureMic(void* outFrame, uint32_t* len) {
     return false;
 }
 static void fakeAcEncode(void* inFrame, int inMaxPayloadSize, void* outEncodedFrame, int* outSize){}

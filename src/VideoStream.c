@@ -77,6 +77,7 @@ static void VideoPingThreadProc(void* context) {
             sendto(rtpSocket, legacyPingData, sizeof(legacyPingData), 0, (struct sockaddr*)&saddr, AddrLen);
         }
 
+        if(receivedDataFromPeer) return;
         PltSleepMsInterruptible(&udpPingThread, 500);
     }
 }

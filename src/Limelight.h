@@ -73,7 +73,7 @@ typedef struct _STREAM_CONFIGURATION {
     // Specifies the channel configuration of the audio stream.
     // See AUDIO_CONFIGURATION constants and MAKE_AUDIO_CONFIGURATION() below.
     int audioConfiguration;
-    
+
     // Specifies the mask of supported video formats.
     // See VIDEO_FORMAT constants below.
     int supportedVideoFormats;
@@ -393,7 +393,7 @@ typedef void(*AudioCaptureCleanup)(void);
 
 // This callback provides Opus audio data to be decoded and played. sampleLength is in bytes.
 //typedef void*(*AudioCaptureGetEncodedSample)(int* outLen);
-typedef bool(*AudioCaptureMic)(void* outSample);
+typedef bool(*AudioCaptureMic)(void* outSample, uint32_t* Length);
 
 typedef void(*AudioCaptureEncode)(void* inFrame, int inMaxPayloadSize, void* outEncodedFrame, int* outSize);
 
@@ -582,10 +582,10 @@ void LiInitializeConnectionCallbacks(PCONNECTION_LISTENER_CALLBACKS clCallbacks)
 typedef struct _SERVER_INFORMATION {
     // Server host name or IP address in text form
     const char* address;
-    
+
     // Text inside 'appversion' tag in /serverinfo
     const char* serverInfoAppVersion;
-    
+
     // Text inside 'GfeVersion' tag in /serverinfo (if present)
     const char* serverInfoGfeVersion;
 
@@ -956,7 +956,7 @@ void LiSetPorts(int https, int http, int rtsp, int audio, int video, int control
 unsigned int LiGetPortFlagsFromStage(int stage);
 unsigned int LiGetPortFlagsFromTerminationErrorCode(int errorCode);
 
-// Returns the IPPROTO_* value for the specified port index 
+// Returns the IPPROTO_* value for the specified port index
 int LiGetProtocolFromPortFlagIndex(int portFlagIndex);
 
 // Returns the port number for the specified port index

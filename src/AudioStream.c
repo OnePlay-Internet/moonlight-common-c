@@ -18,6 +18,8 @@ static bool pingThreadStarted;
 static bool receivedDataFromPeer;
 static uint64_t firstReceiveTime;
 
+static bool StartMic;
+
 #ifdef LC_DEBUG
 #define INVALID_OPUS_HEADER 0x00
 static uint8_t opusHeaderByte;
@@ -53,14 +55,16 @@ static void AudioPingThreadProc(void* context) {
     while (!PltIsThreadInterrupted(&udpPingThread)) {
         if (AudioPingPayload.payload[0] != 0) {
             pingCount++;
-            AudioPingPayload.sequenceNumber = BE32(pingCount);
+            AudioPingPayload.sequenceNumber = BE32(1);
 
+            Limelog("Sent Ping: Seq: %d", pingCount);
             sendto(rtpSocket, (char*)&AudioPingPayload, sizeof(AudioPingPayload), 0, (struct sockaddr*)&saddr, AddrLen);
         }
         else {
             sendto(rtpSocket, legacyPingData, sizeof(legacyPingData), 0, (struct sockaddr*)&saddr, AddrLen);
         }
 
+        if(receivedDataFromPeer) return;
         PltSleepMsInterruptible(&udpPingThread, 500);
     }
 }
@@ -92,6 +96,7 @@ int notifyAudioPortNegotiationComplete(void) {
     LC_ASSERT(!pingThreadStarted);
     LC_ASSERT(AudioPortNumber != 0);
 
+    Limelog("notifyAudioPortNegotiationComplete");
     // For GFE 3.22 compatibility, we must start the audio ping thread before the RTSP handshake.
     // It will not reply to our RTSP PLAY request until the audio ping has been received.
     rtpSocket = bindUdpSocket(RemoteAddr.ss_family, &LocalAddr, AddrLen, 0, SOCK_QOS_TYPE_AUDIO);
@@ -304,6 +309,9 @@ static void AudioReceiveThreadProc(void* context) {
             }
 
             Limelog("Initial audio resync period: %d milliseconds\n", packetsToDrop * AudioPacketDuration);
+
+            if(StartMic)
+            startAudioCaptureStream(context, rtpSocket);
         }
 
         // GFE accumulates audio samples before we are ready to receive them, so
@@ -399,6 +407,10 @@ static void AudioDecoderThreadProc(void* context) {
 }
 
 void stopAudioStream(void) {
+    if(StartMic){
+        stopAudioCaptureStream();
+    }
+    StartMic = false;
     if (!receivedDataFromPeer) {
         Limelog("No audio traffic was ever received from the host!\n");
     }
@@ -424,17 +436,9 @@ int startAudioStream(void* audioContext, int arFlags) {
     int err;
     OPUS_MULTISTREAM_CONFIGURATION chosenConfig;
 
-//If Microphone is enabled then we stop ping thread handle sending audio ping packets using AudioCaptureStream
-// // #ifdef MICROPHONE_FEATURE
-//     if (arFlags & FLAG_MIC_ENABLED) {
-//         if (pingThreadStarted) {
-//             PltInterruptThread(&udpPingThread);
-//             PltJoinThread(&udpPingThread);
-//             pingThreadStarted = false;
-//         }
-//         startAudioCaptureStream(audioContext, rtpSocket);
-//     }
-// // #endif
+// #ifdef MICROPHONE_FEATURE
+    StartMic = arFlags & FLAG_MIC_ENABLED;
+// #endif
 
     if (HighQualitySurroundEnabled) {
         LC_ASSERT(HighQualitySurroundSupported);
