@@ -99,6 +99,8 @@ typedef struct _STREAM_CONFIGURATION {
     // enabled.
     int encryptionFlags;
 
+    int micConfiguration;
+
     // AES encryption data for the remote input stream. This must be
     // the same as what was passed as rikey and rikeyid
     // in /launch and /resume requests.

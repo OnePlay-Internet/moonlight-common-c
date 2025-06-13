@@ -362,7 +362,7 @@ int startAudioCaptureStream(void *audioCaptureContext, int rtpsocket)
     err = PltCreateThread("AudioCapSend", audioCaptureThreadProc, NULL, &captureThread);
     if (err != 0)
     {
-        AudioCaptureCallbacks.stop();
+        // AudioCaptureCallbacks.stop();
         AudioCaptureCallbacks.cleanup();
         return err;
     }
@@ -373,7 +373,7 @@ int startAudioCaptureStream(void *audioCaptureContext, int rtpsocket)
 
 void stopAudioCaptureStream(void)
 {
-    AudioCaptureCallbacks.stop();
+    // AudioCaptureCallbacks.stop();
     AudioCaptureCallbacks.cleanup();
 
     if (captureThreadStarted)
