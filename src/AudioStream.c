@@ -436,9 +436,9 @@ int startAudioStream(void* audioContext, int arFlags) {
     int err;
     OPUS_MULTISTREAM_CONFIGURATION chosenConfig;
 
-// #ifdef MICROPHONE_FEATURE
+#ifdef MICROPHONE_FEATURE
     StartMic = arFlags & FLAG_MIC_ENABLED;
-// #endif
+#endif
 
     if (HighQualitySurroundEnabled) {
         LC_ASSERT(HighQualitySurroundSupported);

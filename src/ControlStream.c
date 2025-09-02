@@ -123,6 +123,7 @@ static PPLT_CRYPTO_CONTEXT decryptionCtx;
 #define IDX_SET_MOTION_EVENT 10
 #define IDX_SET_RGB_LED 11
 #define IDX_TOGGLE_MIC 12
+#define IDX_TOGGLE_MOUSE 13
 
 #define CONTROL_STREAM_TIMEOUT_SEC 10
 #define CONTROL_STREAM_LINGER_TIMEOUT_SEC 2
@@ -198,6 +199,7 @@ static const short packetTypesGen7Enc[] = {
     0x5501, // Set motion event (Sunshine protocol extension)
     0x5502, // Set RGB LED (Sunshine protocol extension)
     0x0108, // Mic Toggle
+    0x0109, // Mouse Toggle
 };
 
 static const char requestIdrFrameGen3[] = { 0, 0 };
@@ -1650,6 +1652,17 @@ bool isControlDataInTransit(void) {
     PltUnlockMutex(&enetMutex);
 
     return ret;
+}
+
+bool LiShowMouseCursor(bool show){
+    char *data = show ? "Relative" : "Absolute";
+
+    if(sendMessageAndForget(packetTypes[IDX_TOGGLE_MOUSE], strlen(data), data, CTRL_CHANNEL_UTF8, ENET_PACKET_FLAG_RELIABLE, false) == 0)
+    {
+        Limelog("Error sending Mouse Mode on Control Stream.");
+        return false;
+    }
+    return true;
 }
 
 bool LiGetEstimatedRttInfo(uint32_t* estimatedRtt, uint32_t* estimatedRttVariance) {

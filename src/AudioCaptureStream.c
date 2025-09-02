@@ -2,6 +2,7 @@
 #include <opus_defines.h>
 #include <WinSock2.h>
 #include <opus.h>
+#include <stdbool.h>
 
 #ifdef ENABLE_AUDIO_LATENCY_MONITOR
 #include <time.h>
@@ -78,7 +79,6 @@ typedef struct _AUDIO_PACKET_HOLDER
 // TODO: keep them in the holder header
 static uint32_t rtpTimestamp = 0;
 static uint16_t seqNumber = 0;
-static bool isMicToggled = false;
 
 // *********FEC related*********
 
@@ -134,6 +134,10 @@ void appendpacketSizeToFile(int32_t size)
 }
 
 #endif
+
+static bool isMicToggled = false;
+static CRITICAL_SECTION cs;
+static CONDITION_VARIABLE cond;
 
 int initializeAudioCaptureStream(void)
 {
@@ -273,6 +277,7 @@ static inline int encryptAudio(unsigned char *inData, int inDataLen,
 extern struct sockaddr_storage RemoteAddr;
 extern uint16_t AudioPortNumber;
 int rtpSocket;
+
 void audioCaptureThreadProc(void *context)
 {
     Limelog("Audio Capture Thread Started");
@@ -285,17 +290,12 @@ void audioCaptureThreadProc(void *context)
 
     AudioCaptureCallbacks.init(0, &chosenConfig, context, 0);
 
-    int err = 0;
-    isMicToggled = false;
+    isMicToggled = true;
     uint16_t CapturedFrame[FRAME_SAMPLE_COUNT * 100];
     uint32_t len = 0;
 
     unsigned char outFrame[1024];
     int encoded_len = 0;
-
-    uint64_t start_time = LiGetMillis();
-
-    char legacyPingData[] = {0x50, 0x49, 0x4E, 0x47};
     LC_SOCKADDR saddr;
 
     LC_ASSERT(AudioPortNumber != 0);
@@ -303,9 +303,14 @@ void audioCaptureThreadProc(void *context)
     memcpy(&saddr, &RemoteAddr, sizeof(saddr));
     SET_PORT(&saddr, AudioPortNumber);
 
-    int pingCount = 0;
     while (!PltIsThreadInterrupted(&captureThread))
     {
+        EnterCriticalSection(&cs);
+        if(!isMicToggled){
+            SleepConditionVariableCS(&cond, &cs, INFINITE);
+        }
+        LeaveCriticalSection(&cs);
+
         if (len < FRAME_SAMPLE_COUNT * 2)
         {
             // SDL_LOG_INFO(0, "Waiting for capturing next frame\n");
@@ -329,7 +334,7 @@ void audioCaptureThreadProc(void *context)
 
 void destroyAudioCaptureStream(void)
 {
-
+    DeleteCriticalSection(&cs);
 #ifdef RTP_DEBUG
     DeinitPacketDebug();
 #endif
@@ -342,6 +347,10 @@ void destroyAudioCaptureStream(void)
 
 int startAudioCaptureStream(void *audioCaptureContext, int rtpsocket)
 {
+
+    InitializeCriticalSection(&cs);
+    InitializeConditionVariable(&cond);
+
     int err;
     OPUS_ENCODER_CONFIGURATION chosenConfig;
     chosenConfig.sampleRate = FREQ;
@@ -392,13 +401,20 @@ void stopAudioCaptureStream(void)
 
 int LiSendMicToggleEvent(bool isMuted)
 {
-    char *data = isMuted ? "Muted" : "Not Muted";
+    char *data = isMuted ? "Mute" : "UnMute";
 
     if (sendMicStatusPacketOnControlStream((unsigned char *)data, strlen(data)) == -1)
     {
         Limelog("Error sending Mic Status on Control Stream.");
+        return -1;
     }
 
+    EnterCriticalSection(&cs);
+    isMicToggled = !isMuted;
+    if(isMicToggled){
+        WakeConditionVariable(&cond);
+    }
+    LeaveCriticalSection(&cs);
     return 0;
 }
 // int LiGetPendingAudioFrames(void){}
