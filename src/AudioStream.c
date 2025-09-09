@@ -89,6 +89,8 @@ int initializeAudioStream(void) {
     return 0;
 }
 
+extern void SetAudioCaptureStreamSocket(int rtpsocket);
+
 // This is called when the RTSP SETUP message is parsed and the audio port
 // number is parsed out of it. Alternatively, it's also called if parsing fails
 // and will use the well known audio port instead.
@@ -111,6 +113,7 @@ int notifyAudioPortNegotiationComplete(void) {
         return err;
     }
 
+    SetAudioCaptureStreamSocket(rtpSocket);
     pingThreadStarted = true;
     return 0;
 }
@@ -136,6 +139,7 @@ void destroyAudioStream(void) {
             PltJoinThread(&udpPingThread);
         }
 
+        SetAudioCaptureStreamSocket(0);
         closeSocket(rtpSocket);
         rtpSocket = INVALID_SOCKET;
     }
@@ -309,9 +313,6 @@ static void AudioReceiveThreadProc(void* context) {
             }
 
             Limelog("Initial audio resync period: %d milliseconds\n", packetsToDrop * AudioPacketDuration);
-
-            if(StartMic)
-            startAudioCaptureStream(context, rtpSocket);
         }
 
         // GFE accumulates audio samples before we are ready to receive them, so
@@ -407,9 +408,6 @@ static void AudioDecoderThreadProc(void* context) {
 }
 
 void stopAudioStream(void) {
-    if(StartMic){
-        stopAudioCaptureStream();
-    }
     StartMic = false;
     if (!receivedDataFromPeer) {
         Limelog("No audio traffic was ever received from the host!\n");
@@ -436,9 +434,9 @@ int startAudioStream(void* audioContext, int arFlags) {
     int err;
     OPUS_MULTISTREAM_CONFIGURATION chosenConfig;
 
-// #ifdef MICROPHONE_FEATURE
+#ifdef MICROPHONE_FEATURE
     StartMic = arFlags & FLAG_MIC_ENABLED;
-// #endif
+#endif
 
     if (HighQualitySurroundEnabled) {
         LC_ASSERT(HighQualitySurroundSupported);

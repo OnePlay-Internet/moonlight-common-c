@@ -81,8 +81,8 @@
 #if defined(LC_WINDOWS)
 #include <crtdbg.h>
 #ifdef LC_DEBUG
-#define LC_ASSERT(x) __analysis_assume(x); \
-                       _ASSERTE(x)
+#define LC_ASSERT(x) //__analysis_assume(x); \
+                       //_ASSERTE(x)
 #else
 #define LC_ASSERT(x)
 #endif

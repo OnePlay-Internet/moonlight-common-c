@@ -99,6 +99,8 @@ typedef struct _STREAM_CONFIGURATION {
     // enabled.
     int encryptionFlags;
 
+    int micConfiguration;
+
     // AES encryption data for the remote input stream. This must be
     // the same as what was passed as rikey and rikeyid
     // in /launch and /resume requests.
@@ -635,6 +637,9 @@ bool LiGetEstimatedRttInfo(uint32_t* estimatedRtt, uint32_t* estimatedRttVarianc
 
 // This function queues a relative mouse move event to be sent to the remote server.
 int LiSendMouseMoveEvent(short deltaX, short deltaY);
+
+//Show/Hide cursor on Server. Returns true on success
+bool LiShowMouseCursor(bool show);
 
 // This function queues a mouse position update event to be sent to the remote server.
 // This functionality is only reliably supported on GFE 3.20 or later. Earlier versions
