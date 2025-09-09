@@ -276,7 +276,7 @@ static inline int encryptAudio(unsigned char *inData, int inDataLen,
 
 extern struct sockaddr_storage RemoteAddr;
 extern uint16_t AudioPortNumber;
-int rtpSocket;
+static int rtpSocket = 0;
 
 void audioCaptureThreadProc(void *context)
 {
@@ -303,11 +303,18 @@ void audioCaptureThreadProc(void *context)
     memcpy(&saddr, &RemoteAddr, sizeof(saddr));
     SET_PORT(&saddr, AudioPortNumber);
 
+    EnterCriticalSection(&cs);
+    if(rtpSocket == 0){
+        SleepConditionVariableCS(&cond, &cs, INFINITE);
+    }
+    LeaveCriticalSection(&cs);
+
     while (!PltIsThreadInterrupted(&captureThread))
     {
         EnterCriticalSection(&cs);
         if(!isMicToggled){
             SleepConditionVariableCS(&cond, &cs, INFINITE);
+            continue;
         }
         LeaveCriticalSection(&cs);
 
@@ -328,7 +335,10 @@ void audioCaptureThreadProc(void *context)
             continue;
         }
 
+        EnterCriticalSection(&cs);
+        if(rtpSocket == 0) break;
         sendto(rtpSocket, (char *)&outFrame, encoded_len, 0, (struct sockaddr *)&saddr, AddrLen);
+        LeaveCriticalSection(&cs);
     }
 }
 
@@ -343,6 +353,16 @@ void destroyAudioCaptureStream(void)
 #ifdef DEBUG_AUDIO_ENCRYPTION
     PltDestroyCryptoContext(audioDecryptionCtx);
 #endif
+}
+
+void SetAudioCaptureStreamSocket(int rtpsocket){
+    if(rtpsocket == 0){
+        EnterCriticalSection(&cs);
+        rtpSocket = rtpsocket;
+        LeaveCriticalSection(&cs);
+    }else{
+        rtpSocket = rtpsocket;
+    }
 }
 
 int startAudioCaptureStream(void *audioCaptureContext, int rtpsocket)
@@ -367,7 +387,7 @@ int startAudioCaptureStream(void *audioCaptureContext, int rtpsocket)
     // Owais: This doesn't do anything be we will keep it just in case
     AudioCaptureCallbacks.start();
 
-    rtpSocket = rtpsocket;
+    // rtpSocket = rtpsocket;
     err = PltCreateThread("AudioCapSend", audioCaptureThreadProc, NULL, &captureThread);
     if (err != 0)
     {
@@ -382,9 +402,6 @@ int startAudioCaptureStream(void *audioCaptureContext, int rtpsocket)
 
 void stopAudioCaptureStream(void)
 {
-    // AudioCaptureCallbacks.stop();
-    AudioCaptureCallbacks.cleanup();
-
     if (captureThreadStarted)
     {
         PltInterruptThread(&captureThread);
@@ -395,6 +412,9 @@ void stopAudioCaptureStream(void)
     {
         Limelog("Called stopAudioCaptureStream but capture thread already not running.");
     }
+
+    // AudioCaptureCallbacks.stop();
+    AudioCaptureCallbacks.cleanup();
 
     initialized = false;
 }
