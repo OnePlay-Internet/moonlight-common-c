@@ -1,6 +1,5 @@
 #include "Limelight-internal.h"
 #include <opus_defines.h>
-#include <WinSock2.h>
 #include <opus.h>
 #include <stdbool.h>
 
@@ -141,49 +140,9 @@ static CONDITION_VARIABLE cond;
 
 int initializeAudioCaptureStream(void)
 {
+    InitializeCriticalSection(&cs);
+    InitializeConditionVariable(&cond);
 
-#ifdef RTP_DEBUG
-    InitPacketDebug();
-#endif
-
-#ifdef ENABLE_AUDIO_LATENCY_MONITOR
-    QueryPerformanceFrequency(&frequency);
-#endif
-
-    // Encryption
-    audioEncryptionCtx = PltCreateCryptoContext();
-    memcpy(&avRiKeyId, StreamConfig.remoteInputAesIv, sizeof(avRiKeyId));
-    avRiKeyId = BE32(avRiKeyId);
-
-    // FEC related
-    rs = reed_solomon_new(RTPA_DATA_SHARDS, RTPA_FEC_SHARDS);
-    fec_packet = malloc(sizeof(AUDIO_FEC_PACKET));
-    if (shards == NULL)
-    {
-        Limelog("FEC PACKET: malloc() failed\n");
-    }
-
-    fec_packet->rtp.header = 0x80;
-    fec_packet->rtp.packetType = 127;
-    fec_packet->rtp.timestamp = 0;
-    fec_packet->rtp.ssrc = 0;
-    fec_packet->fecHeader.payloadType = 101;
-    fec_packet->fecHeader.ssrc = 0;
-
-    shards = malloc(RTPA_TOTAL_SHARDS * MAX_BLOCK_SIZE);
-    if (shards == NULL)
-    {
-        Limelog("FEC Shards: malloc() failed\n");
-    }
-
-    for (int x = 0; x < RTPA_TOTAL_SHARDS; ++x)
-    {
-        shards_p[x] = (uint8_t *)&shards[x * MAX_BLOCK_SIZE];
-    }
-
-#ifdef DEBUG_AUDIO_ENCRYPTION
-    audioDecryptionCtx = PltCreateCryptoContext();
-#endif
     return 0;
 }
 
@@ -191,87 +150,6 @@ int notifyAudioCapturePortNegotiationComplete(void)
 {
     // TODO: setup the udp ports here
     return 0;
-}
-
-static void *allocateHolder(int extraLength, PLINKED_BLOCKING_QUEUE queue, size_t PacketHolderSize)
-{
-    void *holder;
-    int err;
-
-    if (extraLength > 0)
-    {
-        return malloc(PacketHolderSize + extraLength);
-    }
-
-    // Grab an entry from the free list (if available)
-    err = LbqPollQueueElement(queue, &holder);
-    if (err == LBQ_SUCCESS)
-    {
-        return holder;
-    }
-    else if (err == LBQ_INTERRUPTED)
-    {
-        // We're shutting down. Don't bother allocating.
-        return NULL;
-    }
-    else
-    {
-        LC_ASSERT(err == LBQ_NO_ELEMENT);
-
-        // Otherwise we'll have to allocate
-        return malloc(PacketHolderSize);
-    }
-}
-
-// return bytes written on success or return -1 on error
-static inline int encryptAudio(unsigned char *inData, int inDataLen,
-                               unsigned char *outEncryptedData, int *outEncryptedDataLen)
-{
-    unsigned char iv[16] = {0};
-    uint32_t ivSeq = BE32(avRiKeyId + seqNumber);
-    memcpy(iv, &ivSeq, sizeof(ivSeq));
-
-    int ret = 0;
-    unsigned char paddedData[ROUND_TO_PKCS7_PADDED_LEN(MAX_PAYLOAD_SIZE)];
-
-    memcpy(paddedData, inData, inDataLen);
-
-    ret = PltEncryptMessage(
-              audioEncryptionCtx, ALGORITHM_AES_CBC, CIPHER_FLAG_RESET_IV | CIPHER_FLAG_FINISH,
-              (unsigned char *)StreamConfig.remoteInputAesKey,
-              sizeof(StreamConfig.remoteInputAesKey), iv,
-              sizeof(iv), NULL, 0, paddedData, inDataLen,
-              outEncryptedData, outEncryptedDataLen)
-              ? 0
-              : -1;
-
-#ifdef DEBUG_AUDIO_ENCRYPTION
-    unsigned char decryptedAudio[ROUND_TO_PKCS7_PADDED_LEN(MAX_PAYLOAD_SIZE)];
-    int32_t decryptedLen;
-
-    PltDecryptMessage(audioDecryptionCtx, ALGORITHM_AES_CBC,
-                      CIPHER_FLAG_RESET_IV | CIPHER_FLAG_FINISH,
-                      (unsigned char *)StreamConfig.remoteInputAesKey,
-                      sizeof(StreamConfig.remoteInputAesKey), iv,
-                      sizeof(iv), NULL, 0, outEncryptedData,
-                      *outEncryptedDataLen, decryptedAudio, &decryptedLen);
-
-    if (decryptedLen != inDataLen)
-    {
-        Limelog("Mic Decryption Error: Decrypted audio size mismatch.");
-    }
-
-    for (int i = 0; i < inDataLen; i++)
-    {
-        if (paddedData[i] != decryptedAudio[i])
-        {
-            Limelog("Mic Decryption test Failed");
-        }
-    }
-
-#endif
-
-    return ret;
 }
 
 extern struct sockaddr_storage RemoteAddr;
@@ -314,7 +192,6 @@ void audioCaptureThreadProc(void *context)
         EnterCriticalSection(&cs);
         if(!isMicToggled){
             SleepConditionVariableCS(&cond, &cs, INFINITE);
-            continue;
         }
         LeaveCriticalSection(&cs);
 
@@ -345,14 +222,6 @@ void audioCaptureThreadProc(void *context)
 void destroyAudioCaptureStream(void)
 {
     DeleteCriticalSection(&cs);
-#ifdef RTP_DEBUG
-    DeinitPacketDebug();
-#endif
-    PltDestroyCryptoContext(audioEncryptionCtx);
-
-#ifdef DEBUG_AUDIO_ENCRYPTION
-    PltDestroyCryptoContext(audioDecryptionCtx);
-#endif
 }
 
 void SetAudioCaptureStreamSocket(int rtpsocket){
@@ -367,10 +236,6 @@ void SetAudioCaptureStreamSocket(int rtpsocket){
 
 int startAudioCaptureStream(void *audioCaptureContext, int rtpsocket)
 {
-
-    InitializeCriticalSection(&cs);
-    InitializeConditionVariable(&cond);
-
     int err;
     OPUS_ENCODER_CONFIGURATION chosenConfig;
     chosenConfig.sampleRate = FREQ;
@@ -402,6 +267,8 @@ int startAudioCaptureStream(void *audioCaptureContext, int rtpsocket)
 
 void stopAudioCaptureStream(void)
 {
+    AudioCaptureCallbacks.stop();
+
     if (captureThreadStarted)
     {
         PltInterruptThread(&captureThread);
@@ -413,7 +280,6 @@ void stopAudioCaptureStream(void)
         Limelog("Called stopAudioCaptureStream but capture thread already not running.");
     }
 
-    // AudioCaptureCallbacks.stop();
     AudioCaptureCallbacks.cleanup();
 
     initialized = false;

@@ -81,20 +81,20 @@ void LiStopConnection(void) {
         stage--;
         Limelog("done\n");
     }
+#ifdef MICROPHONE_FEATURE
+    if (stage == STAGE_AUDIO_CAPTURE_STREAM_START) {
+        Limelog("Stopping audio capture stream...");
+        stopAudioCaptureStream();
+        stage--;
+        Limelog("done\n");
+    }
+#endif
     if (stage == STAGE_AUDIO_STREAM_START) {
         Limelog("Stopping audio stream...");
         stopAudioStream();
         stage--;
         Limelog("done\n");
     }
-#ifdef MICROPHONE_FEATURE
-    if (stage == STAGE_AUDIO_CAPTURE_STREAM_START) {
-        Limelog("Stopping audio stream...");
-        stopAudioCaptureStream();
-        stage--;
-        Limelog("done\n");
-    }
-#endif
     if (stage == STAGE_VIDEO_STREAM_START) {
         Limelog("Stopping video stream...");
         stopVideoStream();
