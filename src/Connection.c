@@ -129,12 +129,6 @@ void LiStopConnection(void) {
         // Nothing to do
         stage--;
     }
-    if (stage == STAGE_AUDIO_STREAM_INIT) {
-        Limelog("Cleaning up audio stream...");
-        destroyAudioStream();
-        stage--;
-        Limelog("done\n");
-    }
 #ifdef MICROPHONE_FEATURE
     if (stage == STAGE_AUDIO_CAPTURE_STREAM_INIT) {
         Limelog("Cleaning up audio stream...");
@@ -143,6 +137,12 @@ void LiStopConnection(void) {
         Limelog("done\n");
     }
 #endif
+    if (stage == STAGE_AUDIO_STREAM_INIT) {
+        Limelog("Cleaning up audio stream...");
+        destroyAudioStream();
+        stage--;
+        Limelog("done\n");
+    }
     if (stage == STAGE_NAME_RESOLUTION) {
         // Nothing to do
         stage--;
@@ -470,12 +470,12 @@ int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION stre
     err = initializeAudioCaptureStream();
     if (err != 0) {
         Limelog("failed: %d\n", err);
-        ListenerCallbacks.stageFailed(STAGE_AUDIO_STREAM_INIT, err);
+        ListenerCallbacks.stageFailed(STAGE_AUDIO_CAPTURE_STREAM_INIT, err);
         goto Cleanup;
     }
     stage++;
     LC_ASSERT(stage == STAGE_AUDIO_CAPTURE_STREAM_INIT);
-    ListenerCallbacks.stageComplete(STAGE_AUDIO_STREAM_INIT);
+    ListenerCallbacks.stageComplete(STAGE_AUDIO_CAPTURE_STREAM_INIT);
     Limelog("done\n");
 #endif
     // -----------Audio capture Stream init End-----------

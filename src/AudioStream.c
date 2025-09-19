@@ -408,7 +408,6 @@ static void AudioDecoderThreadProc(void* context) {
 }
 
 void stopAudioStream(void) {
-    StartMic = false;
     if (!receivedDataFromPeer) {
         Limelog("No audio traffic was ever received from the host!\n");
     }
