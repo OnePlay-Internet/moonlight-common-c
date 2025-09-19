@@ -136,7 +136,7 @@ void stopAudioCaptureStream(void)
 
     PltLockMutex(&isMicToggled_MTX);
     if(!isMicToggled){
-        PltSignalConditionVariable(&isMicToggled_MTX_COND, &isMicToggled_MTX);
+        PltSignalConditionVariable(&isMicToggled_MTX_COND);
     }
     PltUnlockMutex(&isMicToggled_MTX);
 
