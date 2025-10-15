@@ -89,7 +89,7 @@ int initializeAudioStream(void) {
     return 0;
 }
 
-extern void SetAudioCaptureStreamSocket(int rtpsocket);
+extern void SetAudioCaptureStreamSocket(SOCKET rtpsocket);
 
 // This is called when the RTSP SETUP message is parsed and the audio port
 // number is parsed out of it. Alternatively, it's also called if parsing fails

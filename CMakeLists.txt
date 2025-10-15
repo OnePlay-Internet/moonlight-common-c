@@ -2,7 +2,7 @@
 cmake_minimum_required(VERSION 3.1)
 project(moonlight-common-c LANGUAGES C)
 
-set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
+#set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
 
 option(USE_MBEDTLS "Use MbedTLS instead of OpenSSL" OFF)
 option(CODE_ANALYSIS "Run code analysis during compilation" OFF)

@@ -31,7 +31,7 @@ int notifyAudioCapturePortNegotiationComplete(void)
 
 extern struct sockaddr_storage RemoteAddr;
 extern uint16_t AudioPortNumber;
-static int rtpSocket = 0;
+static SOCKET rtpSocket = 0;
 
 void audioCaptureThreadProc(void *context)
 {
@@ -92,7 +92,7 @@ void destroyAudioCaptureStream(void)
     PltDeleteConditionVariable(&isMicToggled_MTX_COND);
 }
 
-void SetAudioCaptureStreamSocket(int rtpsocket){
+void SetAudioCaptureStreamSocket(SOCKET rtpsocket){
     if(rtpsocket == 0){
         rtpSocket = rtpsocket;
     }else{
@@ -158,7 +158,7 @@ int LiSendMicToggleEvent(bool isMuted)
 {
     char *data = isMuted ? "Mute" : "UnMute";
 
-    if (sendMicStatusPacketOnControlStream((unsigned char *)data, strlen(data)) == -1)
+    if (sendMicStatusPacketOnControlStream((unsigned char *)data, (int)strlen(data)) == -1)
     {
         Limelog("Error sending Mic Status on Control Stream.");
         return -1;
