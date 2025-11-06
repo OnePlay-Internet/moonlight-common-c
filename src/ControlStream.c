@@ -3,6 +3,10 @@
 // This is a private header, but it just contains some time macros
 #include <enet/time.h>
 
+#ifndef MIN
+#define MIN(x, y) ((x) < (y) ? (x) : (y))
+#endif
+
 // NV control stream packet header for TCP
 typedef struct _NVCTL_TCP_PACKET_HEADER {
     unsigned short type;
@@ -119,8 +123,9 @@ static PPLT_CRYPTO_CONTEXT decryptionCtx;
 #define IDX_SET_MOTION_EVENT 10
 #define IDX_SET_RGB_LED 11
 #define IDX_TOGGLE_MIC 12
+#define IDX_TOGGLE_MOUSE 13
 
-#define CONTROL_STREAM_TIMEOUT_SEC 30
+#define CONTROL_STREAM_TIMEOUT_SEC 10
 #define CONTROL_STREAM_LINGER_TIMEOUT_SEC 2
 
 static const short packetTypesGen3[] = {
@@ -194,6 +199,7 @@ static const short packetTypesGen7Enc[] = {
     0x5501, // Set motion event (Sunshine protocol extension)
     0x5502, // Set RGB LED (Sunshine protocol extension)
     0x0108, // Mic Toggle
+    0x0110, // Mouse Toggle
 };
 
 static const char requestIdrFrameGen3[] = { 0, 0 };
@@ -1075,9 +1081,23 @@ static void controlReceiveThreadFunc(void* context) {
                 // We add 1 ms just to ensure we're unlikely to undershoot the sleep() and have to
                 // do a tiny sleep for another iteration before the timeout is ready to be serviced.
                 waitTimeMs = ENET_TIME_DIFFERENCE(peer->nextTimeout, client->serviceTime) + 1;
-                if (waitTimeMs > peer->pingInterval) {
-                    waitTimeMs = peer->pingInterval;
+            }
+
+            // Ensure we don't sleep through a ping
+            if (peer->lastReceiveTime && peer->lastSendTime) {
+                enet_uint32 timeSinceLastRecv = ENET_TIME_DIFFERENCE(client->serviceTime, peer->lastReceiveTime);
+                enet_uint32 timeSinceLastSend = ENET_TIME_DIFFERENCE(client->serviceTime, peer->lastSendTime);
+                enet_uint32 timeSinceLastComm = MIN(timeSinceLastSend, timeSinceLastRecv);
+
+                if (timeSinceLastComm >= peer->pingInterval) {
+                    // Ping is due now for this peer
+                    waitTimeMs = 0;
+                } else {
+                    waitTimeMs = MIN(waitTimeMs, peer->pingInterval - timeSinceLastComm);
                 }
+            }
+            else {
+                waitTimeMs = MIN(waitTimeMs, peer->pingInterval);
             }
         }
 
@@ -1632,6 +1652,17 @@ bool isControlDataInTransit(void) {
     PltUnlockMutex(&enetMutex);
 
     return ret;
+}
+
+bool LiShowMouseCursor(bool show){
+    char *data = show ? "Relative" : "Absolute";
+
+    if(sendMessageAndForget(packetTypes[IDX_TOGGLE_MOUSE], strlen(data), data, CTRL_CHANNEL_UTF8, ENET_PACKET_FLAG_RELIABLE, false) == 0)
+    {
+        Limelog("Error sending Mouse Mode on Control Stream.");
+        return false;
+    }
+    return true;
 }
 
 bool LiGetEstimatedRttInfo(uint32_t* estimatedRtt, uint32_t* estimatedRttVariance) {
