@@ -1655,9 +1655,9 @@ bool isControlDataInTransit(void) {
 }
 
 bool LiShowMouseCursor(bool show){
-    char *data = show ? "Relative" : "Absolute";
+    char data = show ? 'R' : 'A';
 
-    if(sendMessageAndForget(packetTypes[IDX_TOGGLE_MOUSE], strlen(data), data, CTRL_CHANNEL_UTF8, ENET_PACKET_FLAG_RELIABLE, false) == 0)
+    if(sendMessageAndForget(packetTypes[IDX_TOGGLE_MOUSE], 1, &data, CTRL_CHANNEL_UTF8, ENET_PACKET_FLAG_RELIABLE, false) == 0)
     {
         Limelog("Error sending Mouse Mode on Control Stream.");
         return false;
