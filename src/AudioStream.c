@@ -56,8 +56,6 @@ static void AudioPingThreadProc(void* context) {
         if (AudioPingPayload.payload[0] != 0) {
             pingCount++;
             AudioPingPayload.sequenceNumber = BE32(1);
-
-            Limelog("Sent Ping: Seq: %d", pingCount);
             sendto(rtpSocket, (char*)&AudioPingPayload, sizeof(AudioPingPayload), 0, (struct sockaddr*)&saddr, AddrLen);
         }
         else {
