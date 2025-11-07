@@ -534,7 +534,7 @@ static PSDP_OPTION getAttributesList(char*urlSafeAddr) {
         err |= addAttributeString(&optionHead, "x-nv-video[0].encoderCscMode", payloadStr);
     }
 
-     err |= addAttributeString(&optionHead, "x-nv-general.hideCursor", payloadStr);
+     err |= addAttributeString(&optionHead, "x-nv-general.hideCursor", "1");
 
     if (err == 0) {
         return optionHead;
