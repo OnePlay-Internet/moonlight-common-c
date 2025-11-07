@@ -635,6 +635,8 @@ const char* LiGetStageName(int stage);
 // This function may only be called between LiStartConnection() and LiStopConnection().
 bool LiGetEstimatedRttInfo(uint32_t* estimatedRtt, uint32_t* estimatedRttVariance);
 
+bool LiShowMouseCursor(bool show);
+
 // This function queues a relative mouse move event to be sent to the remote server.
 int LiSendMouseMoveEvent(short deltaX, short deltaY);
 
@@ -808,7 +810,7 @@ int LiSendUtf8TextEvent(const char *text, unsigned int length);
 // This function queues a controller event to be sent to the remote server. It will
 // be seen by the computer as the first controller.
 int LiSendControllerEvent(int buttonFlags, unsigned char leftTrigger, unsigned char rightTrigger,
-    short leftStickX, short leftStickY, short rightStickX, short rightStickY);
+                          short leftStickX, short leftStickY, short rightStickX, short rightStickY);
 
 // This function queues a controller event to be sent to the remote server. The controllerNumber
 // parameter is a zero-based index of which controller this event corresponds to. The largest legal
@@ -827,8 +829,8 @@ int LiSendControllerEvent(int buttonFlags, unsigned char leftTrigger, unsigned c
 // To indicate removal of a gamepad, send an empty event with the controller number set to the
 // removed controller and the bit of the removed controller cleared in the active gamepad mask.
 int LiSendMultiControllerEvent(short controllerNumber, short activeGamepadMask,
-    int buttonFlags, unsigned char leftTrigger, unsigned char rightTrigger,
-    short leftStickX, short leftStickY, short rightStickX, short rightStickY);
+                               int buttonFlags, unsigned char leftTrigger, unsigned char rightTrigger,
+                               short leftStickX, short leftStickY, short rightStickX, short rightStickY);
 
 // This function provides a method of informing the host of the available buttons and capabilities
 // on a new controller. This is the recommended approach for indicating the arrival of a new controller.
