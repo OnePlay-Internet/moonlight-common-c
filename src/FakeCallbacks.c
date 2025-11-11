@@ -62,6 +62,7 @@ static void fakeClSetHdrMode(bool enabled) {}
 static void fakeClRumbleTriggers(uint16_t controllerNumber, uint16_t leftTriggerMotor, uint16_t rightTriggerMotor) {}
 static void fakeClSetMotionEventState(uint16_t controllerNumber, uint8_t motionType, uint16_t reportRateHz) {}
 static void fakeClSetControllerLED(uint16_t controllerNumber, uint8_t r, uint8_t g, uint8_t b) {}
+static void fakeClClipboard(const char* data, uint32_t len) {}
 
 static CONNECTION_LISTENER_CALLBACKS fakeClCallbacks = {
     .stageStarting = fakeClStageStarting,
@@ -192,6 +193,9 @@ void fixupMissingCallbacks(PDECODER_RENDERER_CALLBACKS* drCallbacks, PAUDIO_REND
         }
         if ((*clCallbacks)->setControllerLED == NULL) {
             (*clCallbacks)->setControllerLED = fakeClSetControllerLED;
+        }
+        if ((*clCallbacks)->setClipboard == NULL) {
+            (*clCallbacks)->setClipboard = fakeClClipboard;
         }
     }
 }

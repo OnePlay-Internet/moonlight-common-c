@@ -537,7 +537,7 @@ static PSDP_OPTION getAttributesList(char*urlSafeAddr) {
     snprintf(payloadStr, sizeof(payloadStr), "%d", StreamConfig.micConfiguration);
     err |= addAttributeString(&optionHead, "x-nv-general.microphoneEnabled", payloadStr);
 
-     err |= addAttributeString(&optionHead, "x-nv-general.hideCursor", "1");
+    // err |= addAttributeString(&optionHead, "x-nv-general.hideCursor", "1");
 
     if (err == 0) {
         return optionHead;

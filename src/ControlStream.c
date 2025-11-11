@@ -66,6 +66,10 @@ typedef struct _QUEUED_ASYNC_CALLBACK {
             uint8_t g;
             uint8_t b;
         } setControllerLed;
+        struct{
+            uint32_t length;
+            char* text;
+        } setClipboard;
     } data;
     LINKED_BLOCKING_QUEUE_ENTRY entry;
 } QUEUED_ASYNC_CALLBACK, *PQUEUED_ASYNC_CALLBACK;
@@ -124,6 +128,7 @@ static PPLT_CRYPTO_CONTEXT decryptionCtx;
 #define IDX_SET_RGB_LED 11
 #define IDX_TOGGLE_MIC 12
 #define IDX_TOGGLE_MOUSE 13
+#define IDX_CLIPBOARD 14
 
 #define CONTROL_STREAM_TIMEOUT_SEC 10
 #define CONTROL_STREAM_LINGER_TIMEOUT_SEC 2
@@ -200,6 +205,7 @@ static const short packetTypesGen7Enc[] = {
     0x5502, // Set RGB LED (Sunshine protocol extension)
     0x0108, // Mic Toggle
     0x0110, // Mouse Toggle
+    0x0111, // Clipboard
 };
 
 static const char requestIdrFrameGen3[] = { 0, 0 };
@@ -973,6 +979,10 @@ static void asyncCallbackThreadFunc(void* context) {
                                                   queuedCb->data.setMotionEventState.motionType,
                                                   queuedCb->data.setMotionEventState.reportRateHz);
             break;
+        case IDX_CLIPBOARD:
+            ListenerCallbacks.setClipboard(queuedCb->data.setClipboard.text, queuedCb->data.setClipboard.length);
+            free(queuedCb->data.setClipboard.text);
+            break;
         default:
             // Unhandled packet type from queueAsyncCallback()
             LC_ASSERT(false);
@@ -988,7 +998,8 @@ static bool needsAsyncCallback(unsigned short packetType) {
            packetType == packetTypes[IDX_RUMBLE_TRIGGER_DATA] ||
            packetType == packetTypes[IDX_SET_MOTION_EVENT] ||
            packetType == packetTypes[IDX_SET_RGB_LED] ||
-           packetType == packetTypes[IDX_HDR_INFO];
+           packetType == packetTypes[IDX_HDR_INFO] ||
+           packetType == packetTypes[IDX_CLIPBOARD];
 }
 
 static void queueAsyncCallback(PNVCTL_ENET_PACKET_HEADER_V1 ctlHdr, int packetLength) {
@@ -1038,6 +1049,13 @@ static void queueAsyncCallback(PNVCTL_ENET_PACKET_HEADER_V1 ctlHdr, int packetLe
     }
     else if (ctlHdr->type == packetTypes[IDX_HDR_INFO]) {
         queuedCb->typeIndex = IDX_HDR_INFO;
+    }
+    else if(ctlHdr->type == packetTypes[IDX_CLIPBOARD]){
+        queuedCb->typeIndex = IDX_CLIPBOARD;
+        char* text = malloc(bb.length);
+        memcpy(text, bb.buffer, bb.length);
+        queuedCb->data.setClipboard.text = text;
+        queuedCb->data.setClipboard.length = bb.length;
     }
     else {
         // Unhandled packet type from needsAsyncCallback()
