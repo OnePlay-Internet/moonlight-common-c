@@ -418,6 +418,8 @@ typedef struct _AUDIO_CAPTURE_CALLBACKS {
 // Use this function to zero the audio callbacks when allocated on the stack or heap
 void LiInitializeAudioCaptureCallbacks(PAUDIO_CAPTURE_CALLBACKS acCallbacks);
 
+void PushAudio(uint16_t* CapturedFrame, int len);
+
 // Subject to change in future releases
 // Use LiGetStageName() for stable stage names
 
