@@ -28,6 +28,7 @@ extern uint16_t AudioPortNumber;
 static int rtpSocket = 0;
 static unsigned char outFrame[1024];
 LC_SOCKADDR saddr;
+OpusEncoder* m_OpusEncoder;
 
 void PushAudio(uint16_t* CapturedFrame, int len){
     if(!IsAudioCaptureStarted){
@@ -59,7 +60,6 @@ void SetAudioCaptureStreamSocket(int rtpsocket){
     rtpSocket = rtpsocket;
 }
 
-OpusEncoder* m_OpusEncoder;
 int startAudioCaptureStream(void *audioCaptureContext, int rtpsocket)
 {
     int err;
