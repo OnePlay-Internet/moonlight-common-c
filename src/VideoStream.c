@@ -1,4 +1,5 @@
 #include "Limelight-internal.h"
+#include "twcc.h"
 
 #define FIRST_FRAME_MAX 1500
 #define FIRST_FRAME_TIMEOUT_SEC 10
@@ -34,6 +35,11 @@ static bool receivedFullFrame;
 // and subsequent packet/frame bursts that follow.
 #define RTP_RECV_PACKETS_BUFFERED 2048
 
+twcc_context_t twcc;
+uint16_t transport_seq = 0;
+int fb_count = 0;
+uint8_t rtcp[1500];
+
 // Initialize the video stream
 void initializeVideoStream(void) {
     initializeVideoDepacketizer(StreamConfig.packetSize);
@@ -42,6 +48,11 @@ void initializeVideoStream(void) {
     receivedDataFromPeer = false;
     firstDataTimeMs = 0;
     receivedFullFrame = false;
+
+    transport_seq = 0;
+    fb_count = 0;
+    twcc_init(&twcc, 1, 1);
+
 }
 
 // Clean up the video stream
@@ -49,6 +60,7 @@ void destroyVideoStream(void) {
     PltDestroyCryptoContext(decryptionCtx);
     destroyVideoDepacketizer();
     RtpvCleanupQueue(&rtpQueue);
+    twcc_reset(&twcc);
 }
 
 // UDP Ping proc
@@ -67,17 +79,23 @@ static void VideoPingThreadProc(void* context) {
     // to sending a packet prior to the host PC binding to that port.
     int pingCount = 0;
     while (!PltIsThreadInterrupted(&udpPingThread)) {
-        if (VideoPingPayload.payload[0] != 0) {
-            pingCount++;
-            VideoPingPayload.sequenceNumber = BE32(pingCount);
+        if(!receivedDataFromPeer)
+            if (VideoPingPayload.payload[0] != 0) {
+                pingCount++;
+                VideoPingPayload.sequenceNumber = BE32(pingCount);
 
-            sendto(rtpSocket, (char*)&VideoPingPayload, sizeof(VideoPingPayload), 0, (struct sockaddr*)&saddr, AddrLen);
-        }
-        else {
-            sendto(rtpSocket, legacyPingData, sizeof(legacyPingData), 0, (struct sockaddr*)&saddr, AddrLen);
+                sendto(rtpSocket, (char*)&VideoPingPayload, sizeof(VideoPingPayload), 0, (struct sockaddr*)&saddr, AddrLen);
+            }
+            else {
+                sendto(rtpSocket, legacyPingData, sizeof(legacyPingData), 0, (struct sockaddr*)&saddr, AddrLen);
+            }
+        //Send TWCC Periodically
+        else{
+            size_t len = twcc_build_rtcp(&twcc, rtcp, sizeof(rtcp), fb_count++);
+            sendto(rtpSocket, (char*)rtcp, len, 0, (struct sockaddr*)&saddr, AddrLen);
         }
 
-        if(receivedDataFromPeer) return;
+        // if(receivedDataFromPeer) return;
         PltSleepMsInterruptible(&udpPingThread, 500);
     }
 }
@@ -230,6 +248,8 @@ static void VideoReceiveThreadProc(void* context) {
         packet->timestamp = BE32(packet->timestamp);
         packet->ssrc = BE32(packet->ssrc);
 
+        /* on packet receive */
+        twcc_add_packet(&twcc, transport_seq, PltGetMillis());
         queueStatus = RtpvAddPacket(&rtpQueue, packet, err, (PRTPV_QUEUE_ENTRY)&buffer[decryptedSize]);
 
         if (queueStatus == RTPF_RET_QUEUED) {
