@@ -43,7 +43,7 @@ extern "C" {
 // query parameter string. This is used to enable certain extended functionality
 // with Sunshine hosts. The returned string is owned by moonlight-common-c and
 // should not be freed by the caller.
-const char* LiGetLaunchUrlQueryParameters(void);
+const char* LiGetLaunchUrlQueryParameters(bool enable);
 
 typedef struct _STREAM_CONFIGURATION {
     // Dimensions in pixels of the desired video stream

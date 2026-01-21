@@ -1,8 +1,9 @@
 #pragma once
 #include <stdint.h>
 #include <stddef.h>
+#include "Limelight-internal.h"
 
-#define TWCC_MAX_PACKETS 2048
+typedef struct ListNode ListNode;
 
 typedef struct {
     uint16_t seq;
@@ -11,14 +12,15 @@ typedef struct {
 } twcc_packet_t;
 
 typedef struct {
-    uint32_t sender_ssrc;
-    uint32_t media_ssrc;
+    uint32_t transport_wide_cc_cycles;
+    uint32_t transport_wide_cc_last_seq_num;
 
-    twcc_packet_t packets[TWCC_MAX_PACKETS];
-    uint16_t base_seq;
-    uint16_t count;
+    ListNode *transport_wide_received_seq_nums;
 
-    int initialized;
+    uint32_t transport_wide_cc_feedback_count;
+    uint32_t transport_wide_cc_last_feedback_seq_num;
+
+    PLT_MUTEX mutex;
 } twcc_context_t;
 
 void twcc_init(
@@ -27,17 +29,16 @@ void twcc_init(
     uint32_t media_ssrc
     );
 
+void twcc_destry(twcc_context_t* ctx);
+
 void twcc_add_packet(
     twcc_context_t *ctx,
     uint16_t transport_seq,
-    int64_t arrival_time_us
+    uint64_t arrival_time_us
     );
 
-size_t twcc_build_rtcp(
+void twcc_build_rtcp(
     twcc_context_t *ctx,
-    uint8_t *out,
-    size_t out_size,
-    uint8_t fb_pkt_count
+    void (*callback)(char *rtcpbuf, size_t size, void* data),
+    void* data
     );
-
-void twcc_reset(twcc_context_t *ctx);

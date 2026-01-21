@@ -36,9 +36,6 @@ static bool receivedFullFrame;
 #define RTP_RECV_PACKETS_BUFFERED 2048
 
 twcc_context_t twcc;
-uint16_t transport_seq = 0;
-int fb_count = 0;
-uint8_t rtcp[1500];
 
 // Initialize the video stream
 void initializeVideoStream(void) {
@@ -49,8 +46,6 @@ void initializeVideoStream(void) {
     firstDataTimeMs = 0;
     receivedFullFrame = false;
 
-    transport_seq = 0;
-    fb_count = 0;
     twcc_init(&twcc, 1, 1);
 
 }
@@ -60,7 +55,15 @@ void destroyVideoStream(void) {
     PltDestroyCryptoContext(decryptionCtx);
     destroyVideoDepacketizer();
     RtpvCleanupQueue(&rtpQueue);
-    twcc_reset(&twcc);
+    twcc_destry(&twcc);
+}
+
+void OnRtcpReceived(char* rtcp_buf, size_t len, void* data){
+    char send_buf[1500];
+    send_buf[0] = 5;
+    memcpy(&send_buf[1], rtcp_buf, len);
+    sendto(rtpSocket, (char*)send_buf, len+1, 0, (struct sockaddr*)data, AddrLen);
+    // Limelog("RTCP Sent! len:%d\n", len);
 }
 
 // UDP Ping proc
@@ -91,12 +94,11 @@ static void VideoPingThreadProc(void* context) {
             }
         //Send TWCC Periodically
         else{
-            size_t len = twcc_build_rtcp(&twcc, rtcp, sizeof(rtcp), fb_count++);
-            sendto(rtpSocket, (char*)rtcp, len, 0, (struct sockaddr*)&saddr, AddrLen);
+            twcc_build_rtcp(&twcc, OnRtcpReceived, &saddr);
         }
 
         // if(receivedDataFromPeer) return;
-        PltSleepMsInterruptible(&udpPingThread, 500);
+        PltSleepMsInterruptible(&udpPingThread, 100);
     }
 }
 
@@ -249,7 +251,7 @@ static void VideoReceiveThreadProc(void* context) {
         packet->ssrc = BE32(packet->ssrc);
 
         /* on packet receive */
-        twcc_add_packet(&twcc, transport_seq, PltGetMillis());
+        twcc_add_packet(&twcc, packet->sequenceNumber, PltGetMicros());
         queueStatus = RtpvAddPacket(&rtpQueue, packet, err, (PRTPV_QUEUE_ENTRY)&buffer[decryptedSize]);
 
         if (queueStatus == RTPF_RET_QUEUED) {

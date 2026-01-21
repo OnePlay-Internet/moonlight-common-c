@@ -482,6 +482,31 @@ uint64_t PltGetMillis(void) {
 #endif
 }
 
+
+int64_t PltGetMicros(void) {
+#if defined(LC_WINDOWS)
+    static LARGE_INTEGER freq;
+    static int initialized = 0;
+
+    LARGE_INTEGER counter;
+
+    if (!initialized) {
+        QueryPerformanceFrequency(&freq);
+        initialized = 1;
+    }
+
+    QueryPerformanceCounter(&counter);
+
+    return (counter.QuadPart * 1000000LL) / freq.QuadPart;
+#elif defined(__linux__)
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+
+    return (int64_t)ts.tv_sec * 1000000LL +
+           (int64_t)ts.tv_nsec / 1000LL;
+#endif
+}
+
 bool PltSafeStrcpy(char* dest, size_t dest_size, const char* src) {
     LC_ASSERT(dest_size > 0);
 

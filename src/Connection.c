@@ -615,8 +615,11 @@ int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION stre
     return err;
 }
 
-const char* LiGetLaunchUrlQueryParameters(void) {
-    // v0 = Video encryption and control stream encryption v2
-    // v1 = RTSP encryption
-    return "&corever=125";
+const char* LiGetLaunchUrlQueryParameters(bool enable) {
+// v0 = Video encryption and control stream encryption v2
+// v1 = RTSP encryption
+    if(enable)
+        return "&corever=125";
+    else
+        return "&corever=0";
 }
