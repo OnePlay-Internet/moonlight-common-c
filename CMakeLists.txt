@@ -1,5 +1,5 @@
 
-cmake_minimum_required(VERSION 3.1)
+cmake_minimum_required(VERSION 3.5)
 project(moonlight-common-c-oneplay LANGUAGES C)
 
 set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake)
@@ -16,6 +16,7 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ${CMAKE_POSITION_INDEPENDENT_CODE_BACKUP})
 unset(CMAKE_POSITION_INDEPENDENT_CODE_BACKUP)
 
 aux_source_directory(src SRC_LIST)
+aux_source_directory(src/glib SRC_LIST)
 aux_source_directory(reedsolomon SRC_LIST)
 
 # Build shared library by default, but allows user override
@@ -32,6 +33,12 @@ if (BUILD_SHARED_LIBS_OVERRIDE)
 endif()
 
 target_link_libraries(moonlight-common-c-oneplay PRIVATE enet)
+
+
+target_include_directories(moonlight-common-c-oneplay PRIVATE
+  ${CMAKE_CURRENT_SOURCE_DIR}/libs/opus/include
+)
+target_link_libraries(moonlight-common-c-oneplay PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/libs/opus/lib/x64/opus.lib)
 
 if(MSVC)
   target_compile_options(moonlight-common-c-oneplay PRIVATE /W3 /wd4100 /wd4232 /wd5105 /WX)

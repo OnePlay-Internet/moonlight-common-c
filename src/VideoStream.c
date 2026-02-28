@@ -62,7 +62,7 @@ void OnRtcpReceived(char* rtcp_buf, size_t len, void* data){
     char send_buf[1500];
     send_buf[0] = 5;
     memcpy(&send_buf[1], rtcp_buf, len);
-    sendto(rtpSocket, (char*)send_buf, len+1, 0, (struct sockaddr*)data, AddrLen);
+    sendto(rtpSocket, (char*)send_buf, (int)len+1, 0, (struct sockaddr*)data, AddrLen);
     // Limelog("RTCP Sent! len:%d\n", len);
 }
 

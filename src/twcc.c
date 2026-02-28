@@ -6,6 +6,9 @@
 #include "glib/GSList.h"
 #include "glib/GQueue.h"
 
+#define SHRT_MIN    (-32768)
+#define SHRT_MAX      32767
+
 /* Bit manipulation (mostly for TWCC) */
 inline guint32 oneplay_push_bits(guint32 word, size_t num, guint32 val) {
     if(num == 0)
@@ -163,9 +166,9 @@ int oneplay_rtcp_transport_wide_cc_feedback(char* packet, size_t size, uint32_t 
     oneplay_rtcp_transport_wide_cc_stats *stat = (oneplay_rtcp_transport_wide_cc_stats *) g_queue_pop_head (transport_wide_cc_stats);
     /* Calculate temporal info */
     uint16_t base_seq_num = stat->transport_seq_num;
-    bool first_received	= FALSE;
+    bool first_received	= 0;
     uint64_t reference_time = 0;
-    uint32_t packet_status_count = g_queue_get_length(transport_wide_cc_stats) + 1;
+    uint32_t packet_status_count = (int)g_queue_get_length(transport_wide_cc_stats) + 1;
 
     /*
        0                   1                   2                   3
@@ -198,7 +201,7 @@ int oneplay_rtcp_transport_wide_cc_feedback(char* packet, size_t size, uint32_t 
     Queue *statuses = queue_new();
     oneplay_rtp_packet_status last_status = oneplay_rtp_packet_status_reserved;
     oneplay_rtp_packet_status max_status = oneplay_rtp_packet_status_notreceived;
-    bool all_same = TRUE;
+    bool all_same = 1;
 
     /* For each packet  */
     while (stat != NULL) {
@@ -210,7 +213,7 @@ int oneplay_rtcp_transport_wide_cc_feedback(char* packet, size_t size, uint32_t 
             /* If first received */
             if (!first_received) {
                 /* Got it  */
-                first_received = TRUE;
+                first_received = 1;
                 /* Set it */
                 reference_time = stat->timestamp / 64000;
                 /* Get initial time */
@@ -222,7 +225,7 @@ int oneplay_rtcp_transport_wide_cc_feedback(char* packet, size_t size, uint32_t 
 
             /* Get delta */
             if (stat->timestamp>timestamp)
-                delta = (stat->timestamp-timestamp)/250;
+                delta = (int)((stat->timestamp-timestamp)/250);
             else
                 delta = -(int)((timestamp-stat->timestamp)/250);
             /* If it is negative or too big */
@@ -256,7 +259,7 @@ int oneplay_rtcp_transport_wide_cc_feedback(char* packet, size_t size, uint32_t 
                  */
                 word = oneplay_push_bits(word, 1, 0);
                 word = oneplay_push_bits(word, 2, last_status);
-                word = oneplay_push_bits(word, 13, g_queue_get_length(statuses));
+                word = oneplay_push_bits(word, 13, (guint32)g_queue_get_length(statuses));
                 /* Write word */
                 oneplay_set2(data, len, word);
                 len += 2;
@@ -265,10 +268,10 @@ int oneplay_rtcp_transport_wide_cc_feedback(char* packet, size_t size, uint32_t 
                 /* Reset status */
                 last_status = oneplay_rtp_packet_status_reserved;
                 max_status = oneplay_rtp_packet_status_notreceived;
-                all_same = TRUE;
+                all_same = 1;
             } else {
                 /* Not same */
-                all_same = FALSE;
+                all_same = 0;
             }
         }
 
@@ -313,7 +316,7 @@ int oneplay_rtcp_transport_wide_cc_feedback(char* packet, size_t size, uint32_t 
                 /* Reset */
                 last_status = oneplay_rtp_packet_status_reserved;
                 max_status = oneplay_rtp_packet_status_notreceived;
-                all_same = TRUE;
+                all_same = 1;
 
                 /* We need to restore the values, as there may be more elements on the buffer */
                 for (i=0; i<g_queue_get_length(statuses); ++i) {
@@ -327,7 +330,7 @@ int oneplay_rtcp_transport_wide_cc_feedback(char* packet, size_t size, uint32_t 
                     //Check if it is the same */
                     if (all_same && last_status!=oneplay_rtp_packet_status_reserved && status!=last_status) {
                         /* Not the same */
-                        all_same = FALSE;
+                        all_same = 0;
                     }
                     /* Store las status */
                     last_status = status;
@@ -359,7 +362,7 @@ int oneplay_rtcp_transport_wide_cc_feedback(char* packet, size_t size, uint32_t 
                 /* Reset */
                 last_status = oneplay_rtp_packet_status_reserved;
                 max_status = oneplay_rtp_packet_status_notreceived;
-                all_same = TRUE;
+                all_same = 1;
             }
         }
         /* Free mem */
@@ -379,7 +382,7 @@ int oneplay_rtcp_transport_wide_cc_feedback(char* packet, size_t size, uint32_t 
             /* Write run! */
             word = oneplay_push_bits(word, 1, 0);
             word = oneplay_push_bits(word, 2, last_status);
-            word = oneplay_push_bits(word, 13, statuses_len);
+            word = oneplay_push_bits(word, 13, (int)statuses_len);
             /* Write word */
             oneplay_set2(data, len, word);
             len += 2;
@@ -456,10 +459,10 @@ int oneplay_rtcp_transport_wide_cc_feedback(char* packet, size_t size, uint32_t 
     }
 
     /* Set RTCP Len */
-    rtcp->length = htons((len/4)-1);
+    rtcp->length = (uint16_t)htons(((int)len/4)-1);
 
     /* Done */
-    return len;
+    return (int)len;
 }
 
 void twcc_build_rtcp(
@@ -526,7 +529,7 @@ void twcc_build_rtcp(
     uint32_t packets_len = 0;
 
     uint16_t len;
-    while((packets_len = g_queue_get_length(packets)) > 0) {
+    while((packets_len = (int)g_queue_get_length(packets)) > 0) {
         Queue *packets_to_process;
         /* If we have more than 400 packets to acknowledge, let's send more than one message */
         if(packets_len > 400) {
