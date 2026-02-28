@@ -165,7 +165,7 @@ int oneplay_rtcp_transport_wide_cc_feedback(char* packet, size_t size, uint32_t 
     uint16_t base_seq_num = stat->transport_seq_num;
     bool first_received	= FALSE;
     uint64_t reference_time = 0;
-    uint32_t packet_status_count = g_queue_get_length(transport_wide_cc_stats) + 1;
+    uint32_t packet_status_count = (int)g_queue_get_length(transport_wide_cc_stats) + 1;
 
     /*
        0                   1                   2                   3
@@ -222,7 +222,7 @@ int oneplay_rtcp_transport_wide_cc_feedback(char* packet, size_t size, uint32_t 
 
             /* Get delta */
             if (stat->timestamp>timestamp)
-                delta = (stat->timestamp-timestamp)/250;
+                delta = (int)((stat->timestamp-timestamp)/250);
             else
                 delta = -(int)((timestamp-stat->timestamp)/250);
             /* If it is negative or too big */
@@ -256,7 +256,7 @@ int oneplay_rtcp_transport_wide_cc_feedback(char* packet, size_t size, uint32_t 
                  */
                 word = oneplay_push_bits(word, 1, 0);
                 word = oneplay_push_bits(word, 2, last_status);
-                word = oneplay_push_bits(word, 13, g_queue_get_length(statuses));
+                word = oneplay_push_bits(word, 13, (guint32)g_queue_get_length(statuses));
                 /* Write word */
                 oneplay_set2(data, len, word);
                 len += 2;
@@ -379,7 +379,7 @@ int oneplay_rtcp_transport_wide_cc_feedback(char* packet, size_t size, uint32_t 
             /* Write run! */
             word = oneplay_push_bits(word, 1, 0);
             word = oneplay_push_bits(word, 2, last_status);
-            word = oneplay_push_bits(word, 13, statuses_len);
+            word = oneplay_push_bits(word, 13, (int)statuses_len);
             /* Write word */
             oneplay_set2(data, len, word);
             len += 2;
@@ -456,10 +456,10 @@ int oneplay_rtcp_transport_wide_cc_feedback(char* packet, size_t size, uint32_t 
     }
 
     /* Set RTCP Len */
-    rtcp->length = htons((len/4)-1);
+    rtcp->length = (uint16_t)htons(((int)len/4)-1);
 
     /* Done */
-    return len;
+    return (int)len;
 }
 
 void twcc_build_rtcp(
@@ -526,7 +526,7 @@ void twcc_build_rtcp(
     uint32_t packets_len = 0;
 
     uint16_t len;
-    while((packets_len = g_queue_get_length(packets)) > 0) {
+    while((packets_len = (int)g_queue_get_length(packets)) > 0) {
         Queue *packets_to_process;
         /* If we have more than 400 packets to acknowledge, let's send more than one message */
         if(packets_len > 400) {

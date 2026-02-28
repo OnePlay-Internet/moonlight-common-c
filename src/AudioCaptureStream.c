@@ -25,7 +25,7 @@ int notifyAudioCapturePortNegotiationComplete(void)
 static bool IsAudioCaptureStarted;
 extern struct sockaddr_storage RemoteAddr;
 extern uint16_t AudioPortNumber;
-static int rtpSocket = 0;
+static SOCKET rtpSocket = 0;
 static unsigned char outFrame[1024];
 LC_SOCKADDR saddr;
 OpusEncoder* m_OpusEncoder;
@@ -56,11 +56,11 @@ void destroyAudioCaptureStream(void)
 
 }
 
-void SetAudioCaptureStreamSocket(int rtpsocket){
+void SetAudioCaptureStreamSocket(SOCKET rtpsocket){
     rtpSocket = rtpsocket;
 }
 
-int startAudioCaptureStream(void *audioCaptureContext, int rtpsocket)
+int startAudioCaptureStream(void *audioCaptureContext, int arFlags)
 {
     int err;
     OPUS_ENCODER_CONFIGURATION chosenConfig;
@@ -114,7 +114,7 @@ int LiSendMicToggleEvent(bool isMuted)
 {
     char *data = isMuted ? "Mute" : "UnMute";
 
-    if (sendMicStatusPacketOnControlStream((unsigned char *)data, strlen(data)) == -1)
+    if (sendMicStatusPacketOnControlStream((unsigned char *)data, (int)strlen(data)) == -1)
     {
         Limelog("Error sending Mic Status on Control Stream.");
         return -1;
