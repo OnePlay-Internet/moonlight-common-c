@@ -6,6 +6,8 @@
 #include "glib/GSList.h"
 #include "glib/GQueue.h"
 
+#include <limits.h>
+
 /* Bit manipulation (mostly for TWCC) */
 inline guint32 oneplay_push_bits(guint32 word, size_t num, guint32 val) {
     if(num == 0)
