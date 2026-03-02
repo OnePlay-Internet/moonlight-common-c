@@ -20,6 +20,9 @@ static uint64_t firstReceiveTime;
 
 static bool StartMic;
 
+static uint32_t audioAccumBytes;
+static uint64_t audioWindowStartMs;
+
 #ifdef LC_DEBUG
 #define INVALID_OPUS_HEADER 0x00
 static uint8_t opusHeaderByte;
@@ -300,6 +303,21 @@ static void AudioReceiveThreadProc(void* context) {
             continue;
         }
 
+        // Measure audio receive bitrate (500ms window)
+        audioAccumBytes += (uint32_t)packet->header.size;
+        uint64_t nowMs = PltGetMillis();
+        if (audioWindowStartMs == 0) {
+            audioWindowStartMs = nowMs;
+        }
+        else {
+            uint64_t elapsed = nowMs - audioWindowStartMs;
+            if (elapsed >= 500) {
+                TwccCtx.audio_Bps = (audioAccumBytes * 1000u) / (uint32_t)elapsed;
+                audioAccumBytes = 0;
+                audioWindowStartMs = nowMs;
+            }
+        }
+
         rtp = (PRTP_PACKET)&packet->data[0];
 
         if (!receivedDataFromPeer) {
@@ -327,6 +345,11 @@ static void AudioReceiveThreadProc(void* context) {
         rtp->sequenceNumber = BE16(rtp->sequenceNumber);
         rtp->timestamp = BE32(rtp->timestamp);
         rtp->ssrc = BE32(rtp->ssrc);
+
+        uint16_t twccSeqNum = *(uint16_t*)&packet->data[FIXED_RTP_HEADER_SIZE];
+
+        /* on packet receive */
+        twcc_add_packet(&TwccCtx, twccSeqNum, PltGetMicros());
 
         queueStatus = RtpaAddPacket(&rtpAudioQueue, (PRTP_PACKET)&packet->data[0], (uint16_t)packet->header.size);
         if (RTPQ_HANDLE_NOW(queueStatus)) {

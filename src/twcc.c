@@ -4,7 +4,6 @@
 
 #include "glib/gtypes.h"
 #include "glib/GSList.h"
-#include "glib/GQueue.h"
 
 #define SHRT_MIN    (-32768)
 #define SHRT_MAX      32767
@@ -465,16 +464,7 @@ int oneplay_rtcp_transport_wide_cc_feedback(char* packet, size_t size, uint32_t 
     return (int)len;
 }
 
-void twcc_build_rtcp(
-    twcc_context_t *ctx,
-    void (*callback)(char *rtcpbuf, size_t size, void* data),
-    void* data
-    ) {
-
-    /* Create a transport wide feedback message */
-    size_t size = 1300;
-    char rtcpbuf[1300];
-
+Queue* twcc_create_packets_queue(twcc_context_t *ctx){
     //Lock Mutex cause we share transport_wide_received_seq_nums with twcc_add_packet which is called from VideoReceiveThreadProc
     PltLockMutex(&ctx->mutex);
 
@@ -525,11 +515,19 @@ void twcc_build_rtcp(
     //Unlock the Mutex
     PltUnlockMutex(&ctx->mutex);
 
-    /* Create and enqueue RTCP packets */
-    uint32_t packets_len = 0;
+    return packets;
+}
 
-    uint16_t len;
-    while((packets_len = (int)g_queue_get_length(packets)) > 0) {
+//Return length of rtcpbuf
+int twcc_build_rtcp(
+    twcc_context_t *ctx,
+    Queue* packets,
+    uint32_t packets_len,
+    char* rtcpbuf,
+    size_t size
+    ) {
+
+        uint16_t len;
         Queue *packets_to_process;
         /* If we have more than 400 packets to acknowledge, let's send more than one message */
         if(packets_len > 400) {
@@ -555,14 +553,12 @@ void twcc_build_rtcp(
 
         /* We send the packet using the callback */
         if(len > 0) {
-            callback(rtcpbuf, len, data);
+            return len;
         }
         if(packets_to_process != packets) {
             g_queue_free(packets_to_process);
         }
-    }
-    /* Free mem */
-    g_queue_free(packets);
+        return -1;
 }
 
 void twcc_add_packet(twcc_context_t *ctx, uint16_t transport_seq_num, uint64_t arrival_us)

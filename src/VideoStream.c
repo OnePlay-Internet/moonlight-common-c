@@ -1,5 +1,4 @@
 #include "Limelight-internal.h"
-#include "twcc.h"
 
 #define FIRST_FRAME_MAX 1500
 #define FIRST_FRAME_TIMEOUT_SEC 10
@@ -21,6 +20,9 @@ static bool receivedDataFromPeer;
 static uint64_t firstDataTimeMs;
 static bool receivedFullFrame;
 
+static uint32_t videoAccumBytes;
+static uint64_t videoWindowStartMs;
+
 // We can't request an IDR frame until the depacketizer knows
 // that a packet was lost. This timeout bounds the time that
 // the RTP queue will wait for missing/reordered packets.
@@ -35,8 +37,6 @@ static bool receivedFullFrame;
 // and subsequent packet/frame bursts that follow.
 #define RTP_RECV_PACKETS_BUFFERED 2048
 
-twcc_context_t twcc;
-
 // Initialize the video stream
 void initializeVideoStream(void) {
     initializeVideoDepacketizer(StreamConfig.packetSize);
@@ -46,8 +46,8 @@ void initializeVideoStream(void) {
     firstDataTimeMs = 0;
     receivedFullFrame = false;
 
-    twcc_init(&twcc, 1, 1);
-
+    videoAccumBytes = 0;
+    videoWindowStartMs = 0;
 }
 
 // Clean up the video stream
@@ -55,15 +55,6 @@ void destroyVideoStream(void) {
     PltDestroyCryptoContext(decryptionCtx);
     destroyVideoDepacketizer();
     RtpvCleanupQueue(&rtpQueue);
-    twcc_destry(&twcc);
-}
-
-void OnRtcpReceived(char* rtcp_buf, size_t len, void* data){
-    char send_buf[1500];
-    send_buf[0] = 5;
-    memcpy(&send_buf[1], rtcp_buf, len);
-    sendto(rtpSocket, (char*)send_buf, (int)len+1, 0, (struct sockaddr*)data, AddrLen);
-    // Limelog("RTCP Sent! len:%d\n", len);
 }
 
 // UDP Ping proc
@@ -82,7 +73,7 @@ static void VideoPingThreadProc(void* context) {
     // to sending a packet prior to the host PC binding to that port.
     int pingCount = 0;
     while (!PltIsThreadInterrupted(&udpPingThread)) {
-        if(!receivedDataFromPeer)
+        if(!receivedDataFromPeer){
             if (VideoPingPayload.payload[0] != 0) {
                 pingCount++;
                 VideoPingPayload.sequenceNumber = BE32(pingCount);
@@ -92,13 +83,10 @@ static void VideoPingThreadProc(void* context) {
             else {
                 sendto(rtpSocket, legacyPingData, sizeof(legacyPingData), 0, (struct sockaddr*)&saddr, AddrLen);
             }
-        //Send TWCC Periodically
-        else{
-            twcc_build_rtcp(&twcc, OnRtcpReceived, &saddr);
-        }
 
-        // if(receivedDataFromPeer) return;
-        PltSleepMsInterruptible(&udpPingThread, 100);
+            // if(receivedDataFromPeer) return;
+            PltSleepMsInterruptible(&udpPingThread, 500);
+        }else break;
     }
 }
 
@@ -180,6 +168,23 @@ static void VideoReceiveThreadProc(void* context) {
             continue;
         }
 
+        // Accumulate received bytes (includes RTP headers — fine for network rate)
+        videoAccumBytes += (uint32_t)err;
+
+        uint64_t nowMs = PltGetMillis();
+        if (videoWindowStartMs == 0) {
+            videoWindowStartMs = nowMs;
+        }
+        else {
+            uint64_t elapsed = nowMs - videoWindowStartMs;
+            if (elapsed >= 500) {
+                // Bps = bytes * 1000 / elapsed_ms  (gives bytes/sec)
+                TwccCtx.video_Bps = (videoAccumBytes * 1000u) / (uint32_t)elapsed;
+                videoAccumBytes = 0;
+                videoWindowStartMs = nowMs;
+            }
+        }
+
         if (!receivedDataFromPeer) {
             receivedDataFromPeer = true;
             Limelog("Received first video packet after %d ms\n", waitingForVideoMs);
@@ -250,8 +255,12 @@ static void VideoReceiveThreadProc(void* context) {
         packet->timestamp = BE32(packet->timestamp);
         packet->ssrc = BE32(packet->ssrc);
 
+        //2 bytes of 4 bytes reserve is for TWCC Sequence Number;
+        //TWCC is alread in little endien
+        uint16_t twccSeqNum = &buffer[FIXED_RTP_HEADER_SIZE];
         /* on packet receive */
-        twcc_add_packet(&twcc, packet->sequenceNumber, PltGetMicros());
+        twcc_add_packet(&TwccCtx, twccSeqNum, PltGetMicros());
+
         queueStatus = RtpvAddPacket(&rtpQueue, packet, err, (PRTPV_QUEUE_ENTRY)&buffer[decryptedSize]);
 
         if (queueStatus == RTPF_RET_QUEUED) {

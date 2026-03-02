@@ -1,7 +1,8 @@
 #pragma once
 #include <stdint.h>
 #include <stddef.h>
-#include "Limelight-internal.h"
+#include "PlatformThreads.h"
+#include "glib/GQueue.h"
 
 typedef struct ListNode ListNode;
 
@@ -21,6 +22,10 @@ typedef struct {
     uint32_t transport_wide_cc_last_feedback_seq_num;
 
     PLT_MUTEX mutex;
+
+    /*Stats*/
+    uint32_t video_Bps; //Video Bytes Per Second
+    uint32_t audio_Bps; //Video Bytes Per Second
 } twcc_context_t;
 
 void twcc_init(
@@ -37,8 +42,12 @@ void twcc_add_packet(
     uint64_t arrival_time_us
     );
 
-void twcc_build_rtcp(
+int twcc_build_rtcp(
     twcc_context_t *ctx,
-    void (*callback)(char *rtcpbuf, size_t size, void* data),
-    void* data
+    Queue* packets,
+    uint32_t packets_len,
+    char* rtcpbuf,
+    size_t size
     );
+
+Queue* twcc_create_packets_queue(twcc_context_t *ctx);

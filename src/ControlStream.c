@@ -80,7 +80,8 @@ static ENetPeer* peer;
 static PLT_MUTEX enetMutex;
 static bool usePeriodicPing;
 
-static PLT_THREAD lossStatsThread;
+static PLT_THREAD rtcpFeedbackThread;
+// static PLT_THREAD lossStatsThread;
 static PLT_THREAD invalidateRefFramesThread;
 static PLT_THREAD requestIdrFrameThread;
 static PLT_THREAD controlReceiveThread;
@@ -108,6 +109,8 @@ static PLT_EVENT idrFrameRequiredEvent;
 
 static PPLT_CRYPTO_CONTEXT encryptionCtx;
 static PPLT_CRYPTO_CONTEXT decryptionCtx;
+
+twcc_context_t TwccCtx;
 
 #define CONN_IMMEDIATE_POOR_LOSS_RATE 30
 #define CONN_CONSECUTIVE_POOR_LOSS_RATE 15
@@ -287,7 +290,7 @@ static char**preconstructedPayloads;
 static bool supportsIdrFrameRequest;
 
 #define LOSS_REPORT_INTERVAL_MS 50
-#define PERIODIC_PING_INTERVAL_MS 100
+#define PERIODIC_RTCP_INTERVAL_MS 50
 
 // Initializes the control stream
 int initializeControlStream(void) {
@@ -349,6 +352,8 @@ int initializeControlStream(void) {
     hdrEnabled = false;
     memset(&hdrMetadata, 0, sizeof(hdrMetadata));
 
+    twcc_init(&TwccCtx, 0, 0);
+
     return 0;
 }
 
@@ -364,6 +369,8 @@ static void freeBasicLbqList(PLINKED_BLOCKING_QUEUE_ENTRY entry) {
 
 // Cleans up control stream
 void destroyControlStream(void) {
+    twcc_destry(&TwccCtx);
+
     LC_ASSERT(stopping);
     PltDestroyCryptoContext(encryptionCtx);
     PltDestroyCryptoContext(decryptionCtx);
@@ -1355,6 +1362,50 @@ static void controlReceiveThreadFunc(void* context) {
     }
 }
 
+// RTCP packet format
+// [RTCP....][RTT(uint32)][RTT-Varience(uint32)]
+static void rtcpFeedbackThreadFunc(void* context){
+    /* Create a transport wide feedback message */
+    size_t size = 1300;
+    char send_buf[1300];
+
+    while (!PltIsThreadInterrupted(&rtcpFeedbackThread)) {
+       Queue* packets = twcc_create_packets_queue(&TwccCtx);
+
+        uint32_t packets_len = 0;
+        while ((packets_len = (int)g_queue_get_length(packets)) > 0)
+        {
+            size_t rtcp_size = size - 8;
+            int len = twcc_build_rtcp(&TwccCtx, packets, packets_len, send_buf, rtcp_size);
+
+            uint32_t lastRtt = 0;
+            uint32_t lastRttVariance = 0;
+            if (!LiGetEstimatedRttInfo(&lastRtt, &lastRttVariance))
+            {
+                lastRtt = 0;
+                lastRttVariance = 0;
+            }
+
+            
+
+            if (!sendMessageAndForget(0x0200,
+                                      len,
+                                      send_buf,
+                                      CTRL_CHANNEL_GENERIC,
+                                      ENET_PACKET_FLAG_RELIABLE,
+                                      false))
+            {
+                Limelog("RTCP Feedback: Transaction failed: %d\n", (int)LastSocketError());
+                ListenerCallbacks.connectionTerminated(LastSocketFail());
+                return;
+            }
+        }
+        /* Free mem */
+        g_queue_free(packets);
+        PltSleepMsInterruptible(&rtcpFeedbackThread, PERIODIC_RTCP_INTERVAL_MS);
+    }
+}
+/*
 static void lossStatsThreadFunc(void* context) {
     BYTE_BUFFER byteBuffer;
 
@@ -1456,7 +1507,7 @@ static void lossStatsThreadFunc(void* context) {
         free(lossStatsPayload);
     }
 }
-
+*/
 static void requestIdrFrame(void) {
     // If this server does not have a known IDR frame request
     // message, we'll accomplish the same thing by creating a
@@ -1591,12 +1642,12 @@ int stopControlStream(void) {
         shutdownTcpSocket(ctlSock);
     }
 
-    PltInterruptThread(&lossStatsThread);
+    PltInterruptThread(&rtcpFeedbackThread);
     PltInterruptThread(&requestIdrFrameThread);
     PltInterruptThread(&controlReceiveThread);
     PltInterruptThread(&asyncCallbackThread);
 
-    PltJoinThread(&lossStatsThread);
+    PltJoinThread(&rtcpFeedbackThread);
     PltJoinThread(&requestIdrFrameThread);
     PltJoinThread(&controlReceiveThread);
     PltJoinThread(&asyncCallbackThread);
@@ -1891,7 +1942,7 @@ int startControlStream(void) {
         return err;
     }
 
-    err = PltCreateThread("LossStats", lossStatsThreadFunc, NULL, &lossStatsThread);
+    err = PltCreateThread("RTCPFeedback", rtcpFeedbackThreadFunc, NULL, &rtcpFeedbackThread);
     if (err != 0) {
         stopping = true;
 
@@ -1918,6 +1969,38 @@ int startControlStream(void) {
         return err;
     }
 
+    // @author Owais: Commenting this Thread. Its useless. 
+    // doesn't send any lossStats in new version just periodic
+    // ping messages to update ENet's RTT variable. 
+    // We are sending RTCP feedback message periodically
+    // so that will update RTT so no need this empty pings
+    /*err = PltCreateThread("LossStats", lossStatsThreadFunc, NULL, &lossStatsThread);
+    if (err != 0) {
+        stopping = true;
+
+        if (ctlSock != INVALID_SOCKET) {
+            shutdownTcpSocket(ctlSock);
+        }
+        else {
+            ConnectionInterrupted = true;
+        }
+
+        PltInterruptThread(&controlReceiveThread);
+        PltJoinThread(&controlReceiveThread);
+
+        if (ctlSock != INVALID_SOCKET) {
+            closeSocket(ctlSock);
+            ctlSock = INVALID_SOCKET;
+        }
+        else {
+            enet_peer_disconnect_now(peer, 0);
+            peer = NULL;
+            enet_host_destroy(client);
+            client = NULL;
+        }
+        return err;
+    }*/
+
     err = PltCreateThread("ReqIdrFrame", requestIdrFrameFunc, NULL, &requestIdrFrameThread);
     if (err != 0) {
         stopping = true;
@@ -1929,8 +2012,8 @@ int startControlStream(void) {
             ConnectionInterrupted = true;
         }
 
-        PltInterruptThread(&lossStatsThread);
-        PltJoinThread(&lossStatsThread);
+        PltInterruptThread(&rtcpFeedbackThread);
+        PltJoinThread(&rtcpFeedbackThread);
 
         PltInterruptThread(&controlReceiveThread);
         PltJoinThread(&controlReceiveThread);
@@ -1961,8 +2044,8 @@ int startControlStream(void) {
             ConnectionInterrupted = true;
         }
 
-        PltInterruptThread(&lossStatsThread);
-        PltJoinThread(&lossStatsThread);
+        PltInterruptThread(&rtcpFeedbackThread);
+        PltJoinThread(&rtcpFeedbackThread);
 
         PltInterruptThread(&controlReceiveThread);
         PltJoinThread(&controlReceiveThread);
@@ -1999,8 +2082,8 @@ int startControlStream(void) {
                 ConnectionInterrupted = true;
             }
 
-            PltInterruptThread(&lossStatsThread);
-            PltJoinThread(&lossStatsThread);
+            PltInterruptThread(&rtcpFeedbackThread);
+            PltJoinThread(&rtcpFeedbackThread);
 
             PltInterruptThread(&controlReceiveThread);
             PltJoinThread(&controlReceiveThread);
