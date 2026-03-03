@@ -47,7 +47,8 @@ const char* LiGetLaunchUrlQueryParameters(bool enable);
 
 
 typedef struct _STATS_INFO{
-    int video_recv_Bps;
+    float video_recv_Bps;
+    float audio_recv_Bps; 
 } STATS_INFO, *PSTATS_INFO;
 
 STATS_INFO GetStats();

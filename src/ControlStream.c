@@ -2051,5 +2051,6 @@ bool LiGetHdrMetadata(PSS_HDR_METADATA metadata) {
 STATS_INFO GetStats(){
     STATS_INFO s;
     s.video_recv_Bps = TwccCtx.video_Bps;
+    s.audio_recv_Bps = TwccCtx.audio_Bps;
     return s;
 }

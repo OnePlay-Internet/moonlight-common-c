@@ -177,7 +177,7 @@ static void VideoReceiveThreadProc(void* context) {
         }
         else {
             uint64_t elapsed = nowMs - videoWindowStartMs;
-            if (elapsed >= 500) {
+            if (elapsed >= 200) {
                 // Bps = bytes * 1000 / elapsed_ms  (gives bytes/sec)
                 TwccCtx.video_Bps = (videoAccumBytes * 1000u) / (uint32_t)elapsed;
                 videoAccumBytes = 0;
