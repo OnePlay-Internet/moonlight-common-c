@@ -45,6 +45,13 @@ extern "C" {
 // should not be freed by the caller.
 const char* LiGetLaunchUrlQueryParameters(bool enable);
 
+
+typedef struct _STATS_INFO{
+    int video_recv_Bps;
+} STATS_INFO, *PSTATS_INFO;
+
+STATS_INFO GetStats();
+
 typedef struct _STREAM_CONFIGURATION {
     // Dimensions in pixels of the desired video stream
     int width;

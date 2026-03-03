@@ -2124,3 +2124,9 @@ bool LiGetHdrMetadata(PSS_HDR_METADATA metadata) {
     *metadata = hdrMetadata;
     return true;
 }
+
+STATS_INFO GetStats(){
+    STATS_INFO s;
+    s.video_recv_Bps = TwccCtx.video_Bps;
+    return s;
+}
