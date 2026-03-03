@@ -24,7 +24,7 @@ typedef struct {
     PLT_MUTEX mutex;
 
     /*Stats*/
-    uint32_t video_Bps; //Video Bytes Per Second
+    float video_Bps; //Video Bytes Per Second
     uint32_t audio_Bps; //Video Bytes Per Second
 } twcc_context_t;
 

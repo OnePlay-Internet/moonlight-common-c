@@ -259,7 +259,7 @@ static void VideoReceiveThreadProc(void* context) {
         //TWCC is alread in little endien
         uint16_t twccSeqNum = &buffer[FIXED_RTP_HEADER_SIZE];
         /* on packet receive */
-        twcc_add_packet(&TwccCtx, twccSeqNum, PltGetMicros());
+        // twcc_add_packet(&TwccCtx, twccSeqNum, PltGetMicros());
 
         queueStatus = RtpvAddPacket(&rtpQueue, packet, err, (PRTPV_QUEUE_ENTRY)&buffer[decryptedSize]);
 

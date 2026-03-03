@@ -349,7 +349,7 @@ static void AudioReceiveThreadProc(void* context) {
         uint16_t twccSeqNum = *(uint16_t*)&packet->data[FIXED_RTP_HEADER_SIZE];
 
         /* on packet receive */
-        twcc_add_packet(&TwccCtx, twccSeqNum, PltGetMicros());
+        // twcc_add_packet(&TwccCtx, twccSeqNum, PltGetMicros());
 
         queueStatus = RtpaAddPacket(&rtpAudioQueue, (PRTP_PACKET)&packet->data[0], (uint16_t)packet->header.size);
         if (RTPQ_HANDLE_NOW(queueStatus)) {
