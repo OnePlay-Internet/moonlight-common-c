@@ -1367,10 +1367,6 @@ static void lossStatsThreadFunc(void* context) {
     if (usePeriodicPing) {
         char periodicPingPayload[8];
 
-        BbInitializeWrappedBuffer(&byteBuffer, periodicPingPayload, 0, sizeof(periodicPingPayload), BYTE_ORDER_LITTLE);
-        BbPut16(&byteBuffer, 4); // Length of payload
-        BbPut32(&byteBuffer, 0); // Timestamp?
-
         while (!PltIsThreadInterrupted(&lossStatsThread)) {
             // For Sunshine servers, send the more detailed per-frame FEC messages
             if (IS_SUNSHINE()) {
@@ -1396,6 +1392,13 @@ static void lossStatsThreadFunc(void* context) {
                     free(queuedFrameStatus);
                 }
             }
+
+            BbInitializeWrappedBuffer(&byteBuffer, periodicPingPayload, 0, sizeof(periodicPingPayload), BYTE_ORDER_LITTLE);
+            BbPut16(&byteBuffer, 5); // Length of payload
+            BbPut8(&byteBuffer, lastConnectionStatusUpdate); // Congested?
+            uint32_t TotalRecvByteRate = TwccCtx.video_Bps + TwccCtx.audio_Bps;
+            // BbPut32(&byteBuffer, TotalRecvByteRate); //Received ByteRate
+            memcpy(&periodicPingPayload[3], &TotalRecvByteRate, sizeof(TotalRecvByteRate));
 
             // Send the message (and don't expect a response)
             //
