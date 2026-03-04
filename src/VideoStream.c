@@ -257,7 +257,7 @@ static void VideoReceiveThreadProc(void* context) {
 
         //2 bytes of 4 bytes reserve is for TWCC Sequence Number;
         //TWCC is alread in little endien
-        uint16_t twccSeqNum = &buffer[FIXED_RTP_HEADER_SIZE];
+        // uint16_t twccSeqNum = &buffer[FIXED_RTP_HEADER_SIZE];
         /* on packet receive */
         // twcc_add_packet(&TwccCtx, twccSeqNum, PltGetMicros());
 

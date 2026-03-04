@@ -41,7 +41,7 @@ target_include_directories(moonlight-common-c-oneplay PRIVATE
 target_link_libraries(moonlight-common-c-oneplay PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/libs/opus/lib/x64/opus.lib)
 
 if(MSVC)
-  target_compile_options(moonlight-common-c-oneplay PRIVATE /W3 /wd4100 /wd4232 /wd5105 /WX)
+  target_compile_options(moonlight-common-c-oneplay PRIVATE /W3 /wd4100 /wd4232 /wd5105)
   target_link_libraries(moonlight-common-c-oneplay PRIVATE ws2_32.lib winmm.lib)
 elseif(MINGW)
   target_link_libraries(moonlight-common-c-oneplay PRIVATE -lws2_32 -lwinmm)
