@@ -141,6 +141,8 @@ static const short packetTypesGen3[] = {
     -1,     // Rumble triggers (unused)
     -1,     // Set motion event (unused)
     -1,     // Set RGB LED (unused)
+    -1,     // Mic Toggle (unused)
+    -1,     // Mouse Toggle (unused)
 };
 static const short packetTypesGen4[] = {
     0x0606, // Request IDR frame
@@ -155,6 +157,8 @@ static const short packetTypesGen4[] = {
     -1,     // Rumble triggers (unused)
     -1,     // Set motion event (unused)
     -1,     // Set RGB LED (unused)
+    -1,     // Mic Toggle (unused)
+    -1,     // Mouse Toggle (unused)
 };
 static const short packetTypesGen5[] = {
     0x0305, // Start A
@@ -169,6 +173,8 @@ static const short packetTypesGen5[] = {
     -1,     // Rumble triggers (unused)
     -1,     // Set motion event (unused)
     -1,     // Set RGB LED (unused)
+    -1,     // Mic Toggle (unused)
+    -1,     // Mouse Toggle (unused)
 };
 static const short packetTypesGen7[] = {
     0x0305, // Start A
@@ -184,6 +190,7 @@ static const short packetTypesGen7[] = {
     -1,     // Set motion event (unused)
     -1,     // Set RGB LED (unused)
     0x0108, // Mic Toggle
+    -1,     // Mouse Toggle (unused)
 };
 static const short packetTypesGen7Enc[] = {
     0x0302, // Request IDR frame
@@ -199,7 +206,7 @@ static const short packetTypesGen7Enc[] = {
     0x5501, // Set motion event (Sunshine protocol extension)
     0x5502, // Set RGB LED (Sunshine protocol extension)
     0x0108, // Mic Toggle
-    0x0109, // Mouse Toggle
+    0x5503, // Mouse Toggle (Sunshine protocol extension)
 };
 
 static const char requestIdrFrameGen3[] = { 0, 0 };
@@ -1622,6 +1629,12 @@ int sendInputPacketOnControlStream(unsigned char* data, int length, uint8_t chan
 
 int sendMicStatusPacketOnControlStream(unsigned char* data, int length){
 
+    // Older host generations have no packet type for this message.
+    if (packetTypes[IDX_TOGGLE_MIC] == -1) {
+        Limelog("Mic toggle is not supported by this host\n");
+        return -1;
+    }
+
     Limelog("len of the mic send %d", length);
     if(sendMessageAndForget(packetTypes[IDX_TOGGLE_MIC], length, data, CTRL_CHANNEL_UTF8, ENET_PACKET_FLAG_RELIABLE, false) == 0)
     {
@@ -1656,6 +1669,12 @@ bool isControlDataInTransit(void) {
 
 bool LiShowMouseCursor(bool show){
     char *data = show ? "Relative" : "Absolute";
+
+    // Older host generations have no packet type for this message.
+    if (packetTypes[IDX_TOGGLE_MOUSE] == -1) {
+        Limelog("Mouse cursor toggle is not supported by this host\n");
+        return false;
+    }
 
     if(sendMessageAndForget(packetTypes[IDX_TOGGLE_MOUSE], strlen(data), data, CTRL_CHANNEL_UTF8, ENET_PACKET_FLAG_RELIABLE, false) == 0)
     {
