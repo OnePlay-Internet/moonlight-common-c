@@ -16,7 +16,6 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ${CMAKE_POSITION_INDEPENDENT_CODE_BACKUP})
 unset(CMAKE_POSITION_INDEPENDENT_CODE_BACKUP)
 
 aux_source_directory(src SRC_LIST)
-aux_source_directory(src/glib SRC_LIST)
 aux_source_directory(reedsolomon SRC_LIST)
 
 # Build shared library by default, but allows user override
