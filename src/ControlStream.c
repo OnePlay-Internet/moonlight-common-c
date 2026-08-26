@@ -130,7 +130,11 @@ static PPLT_CRYPTO_CONTEXT decryptionCtx;
 #define IDX_TOGGLE_MOUSE 13
 #define IDX_CLIPBOARD 14
 
-#define CONTROL_STREAM_TIMEOUT_SEC 10
+// 30s, not the upstream 10s: raised by 834baa6 to fix intermittent "Session
+// Initiation" failures where a slow host handshake tripped the timeout. b9c4fe7
+// ("Add mouse toggle") put it back to 10 as collateral -- that commit's subject
+// has nothing to do with timeouts -- which silently undid the fix. Restored.
+#define CONTROL_STREAM_TIMEOUT_SEC 30
 #define CONTROL_STREAM_LINGER_TIMEOUT_SEC 2
 
 static const short packetTypesGen3[] = {
