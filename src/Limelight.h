@@ -635,6 +635,29 @@ const char* LiGetStageName(int stage);
 // This function may only be called between LiStartConnection() and LiStopConnection().
 bool LiGetEstimatedRttInfo(uint32_t* estimatedRtt, uint32_t* estimatedRttVariance);
 
+// Cumulative video network counters for the current connection.
+//
+// These are the numbers that distinguish "the link is lossy" from "the link is
+// saturated": a saturated path drops the tail of each frame's burst, which is
+// where the FEC parity shards sit, so parity arrival collapses while data
+// arrival still looks reasonable. Frame-level loss alone cannot show that.
+//
+// All counters are cumulative since connection start and never reset.
+typedef struct _LI_VIDEO_NETWORK_STATS {
+    uint32_t totalDataPackets;        // data shards the host said it sent
+    uint32_t totalParityPackets;      // parity shards the host said it sent
+    uint32_t receivedDataPackets;     // data shards that arrived
+    uint32_t receivedParityPackets;   // parity shards that arrived
+    uint32_t framesRecovered;         // frames FEC successfully repaired
+    uint32_t framesLost;              // frames FEC could not repair
+    uint32_t idrRequestsSent;         // full keyframe requests
+    uint32_t rfiRequestsSent;         // reference frame invalidation requests
+} LI_VIDEO_NETWORK_STATS, *PLI_VIDEO_NETWORK_STATS;
+
+// Fills in the counters above. Safe to call at any time from any thread; the
+// values are a consistent-enough snapshot for reporting, not for control.
+void LiGetVideoNetworkStats(PLI_VIDEO_NETWORK_STATS stats);
+
 // This function queues a relative mouse move event to be sent to the remote server.
 int LiSendMouseMoveEvent(short deltaX, short deltaY);
 

@@ -1491,6 +1491,7 @@ static void requestIdrFrame(void) {
         }
     }
 
+    VideoStatIdrRequests++;
     Limelog("IDR frame request sent\n");
 }
 
@@ -1515,6 +1516,7 @@ static void requestInvalidateReferenceFrames(uint32_t startFrame, uint32_t endFr
         return;
     }
 
+    VideoStatRfiRequests++;
     Limelog("Invalidate reference frame request sent (%d to %d)\n", startFrame, endFrame);
 }
 

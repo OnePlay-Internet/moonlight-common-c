@@ -12,6 +12,34 @@ struct sockaddr_storage RemoteAddr;
 struct sockaddr_storage LocalAddr;
 SOCKADDR_LEN AddrLen;
 int AppVersionQuad[4];
+
+// Cumulative video network counters. Plain uint32 rather than atomics: these
+// are incremented on the video receive thread and read on the reporting thread,
+// where a torn read costs nothing but a slightly stale number, and the
+// alternative would put a lock on the per-packet hot path.
+uint32_t VideoStatTotalDataPackets;
+uint32_t VideoStatTotalParityPackets;
+uint32_t VideoStatReceivedDataPackets;
+uint32_t VideoStatReceivedParityPackets;
+uint32_t VideoStatFramesRecovered;
+uint32_t VideoStatFramesLost;
+uint32_t VideoStatIdrRequests;
+uint32_t VideoStatRfiRequests;
+
+void LiGetVideoNetworkStats(PLI_VIDEO_NETWORK_STATS stats) {
+    if (stats == NULL) {
+        return;
+    }
+
+    stats->totalDataPackets = VideoStatTotalDataPackets;
+    stats->totalParityPackets = VideoStatTotalParityPackets;
+    stats->receivedDataPackets = VideoStatReceivedDataPackets;
+    stats->receivedParityPackets = VideoStatReceivedParityPackets;
+    stats->framesRecovered = VideoStatFramesRecovered;
+    stats->framesLost = VideoStatFramesLost;
+    stats->idrRequestsSent = VideoStatIdrRequests;
+    stats->rfiRequestsSent = VideoStatRfiRequests;
+}
 STREAM_CONFIGURATION StreamConfig;
 CONNECTION_LISTENER_CALLBACKS ListenerCallbacks;
 DECODER_RENDERER_CALLBACKS VideoCallbacks;
@@ -295,6 +323,15 @@ int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION stre
     // The values in RTSP SETUP will be used to populate these.
     VideoPortNumber = 0;
     ControlPortNumber = 0;
+
+    VideoStatTotalDataPackets = 0;
+    VideoStatTotalParityPackets = 0;
+    VideoStatReceivedDataPackets = 0;
+    VideoStatReceivedParityPackets = 0;
+    VideoStatFramesRecovered = 0;
+    VideoStatFramesLost = 0;
+    VideoStatIdrRequests = 0;
+    VideoStatRfiRequests = 0;
     AudioPortNumber = 0;
 
 #ifdef DYNAMIC_PORTS
