@@ -580,6 +580,10 @@ typedef void(*ConnListenerSetVirtualKeyboard)(uint8_t visible, uint8_t inputHint
 // possibly type credentials into, must show them the address bar their browser gives it.
 typedef void(*ConnListenerOpenUrl)(const char* url);
 
+// This callback is invoked when the game calls the OnePlay Gaming SDK's
+// TerminateStream(reason) when the player quits.
+typedef void(*ConnListenerTerminateStream)(const char* reason);
+
 typedef struct _CONNECTION_LISTENER_CALLBACKS {
     ConnListenerStageStarting stageStarting;
     ConnListenerStageComplete stageComplete;
@@ -597,6 +601,7 @@ typedef struct _CONNECTION_LISTENER_CALLBACKS {
     // would otherwise read the wrong member for every callback after the insertion point.
     ConnListenerSetVirtualKeyboard setVirtualKeyboard;
     ConnListenerOpenUrl openUrl;
+    ConnListenerTerminateStream terminateStream;
 } CONNECTION_LISTENER_CALLBACKS, *PCONNECTION_LISTENER_CALLBACKS;
 
 // Use this function to zero the connection callbacks when allocated on the stack or heap
