@@ -66,6 +66,14 @@ typedef struct _QUEUED_ASYNC_CALLBACK {
             uint8_t g;
             uint8_t b;
         } setControllerLed;
+        struct {
+            uint16_t x;
+            uint16_t y;
+            uint16_t width;
+            uint16_t height;
+            uint8_t visible;
+            uint8_t inputHint;
+        } setVirtualKeyboard;
     } data;
     LINKED_BLOCKING_QUEUE_ENTRY entry;
 } QUEUED_ASYNC_CALLBACK, *PQUEUED_ASYNC_CALLBACK;
@@ -124,6 +132,7 @@ static PPLT_CRYPTO_CONTEXT decryptionCtx;
 #define IDX_SET_RGB_LED 11
 #define IDX_TOGGLE_MIC 12
 #define IDX_TOGGLE_MOUSE 13
+#define IDX_SET_VIRTUAL_KEYBOARD 14
 
 #define CONTROL_STREAM_TIMEOUT_SEC 10
 #define CONTROL_STREAM_LINGER_TIMEOUT_SEC 2
@@ -143,6 +152,7 @@ static const short packetTypesGen3[] = {
     -1,     // Set RGB LED (unused)
     -1,     // Mic Toggle (unused)
     -1,     // Mouse Toggle (unused)
+    -1,     // Set virtual keyboard (unused)
 };
 static const short packetTypesGen4[] = {
     0x0606, // Request IDR frame
@@ -159,6 +169,7 @@ static const short packetTypesGen4[] = {
     -1,     // Set RGB LED (unused)
     -1,     // Mic Toggle (unused)
     -1,     // Mouse Toggle (unused)
+    -1,     // Set virtual keyboard (unused)
 };
 static const short packetTypesGen5[] = {
     0x0305, // Start A
@@ -175,6 +186,7 @@ static const short packetTypesGen5[] = {
     -1,     // Set RGB LED (unused)
     -1,     // Mic Toggle (unused)
     -1,     // Mouse Toggle (unused)
+    -1,     // Set virtual keyboard (unused)
 };
 static const short packetTypesGen7[] = {
     0x0305, // Start A
@@ -191,6 +203,7 @@ static const short packetTypesGen7[] = {
     -1,     // Set RGB LED (unused)
     0x0108, // Mic Toggle
     -1,     // Mouse Toggle (unused)
+    -1,     // Set virtual keyboard (unused)
 };
 static const short packetTypesGen7Enc[] = {
     0x0302, // Request IDR frame
@@ -207,6 +220,7 @@ static const short packetTypesGen7Enc[] = {
     0x5502, // Set RGB LED (Sunshine protocol extension)
     0x0108, // Mic Toggle
     0x5503, // Mouse Toggle (Sunshine protocol extension)
+    0x5504, // Set virtual keyboard (Sunshine protocol extension)
 };
 
 static const char requestIdrFrameGen3[] = { 0, 0 };
@@ -980,6 +994,18 @@ static void asyncCallbackThreadFunc(void* context) {
                                                   queuedCb->data.setMotionEventState.motionType,
                                                   queuedCb->data.setMotionEventState.reportRateHz);
             break;
+
+        case IDX_SET_VIRTUAL_KEYBOARD:
+            // Not batched. A show followed by a hide are different instructions, and
+            // collapsing them would leave the keyboard in whichever state arrived last
+            // rather than the state the game actually asked for.
+            ListenerCallbacks.setVirtualKeyboard(queuedCb->data.setVirtualKeyboard.visible,
+                                                 queuedCb->data.setVirtualKeyboard.inputHint,
+                                                 queuedCb->data.setVirtualKeyboard.x,
+                                                 queuedCb->data.setVirtualKeyboard.y,
+                                                 queuedCb->data.setVirtualKeyboard.width,
+                                                 queuedCb->data.setVirtualKeyboard.height);
+            break;
         default:
             // Unhandled packet type from queueAsyncCallback()
             LC_ASSERT(false);
@@ -995,6 +1021,7 @@ static bool needsAsyncCallback(unsigned short packetType) {
            packetType == packetTypes[IDX_RUMBLE_TRIGGER_DATA] ||
            packetType == packetTypes[IDX_SET_MOTION_EVENT] ||
            packetType == packetTypes[IDX_SET_RGB_LED] ||
+           packetType == packetTypes[IDX_SET_VIRTUAL_KEYBOARD] ||
            packetType == packetTypes[IDX_HDR_INFO];
 }
 
@@ -1042,6 +1069,16 @@ static void queueAsyncCallback(PNVCTL_ENET_PACKET_HEADER_V1 ctlHdr, int packetLe
         BbGet8(&bb, &queuedCb->data.setControllerLed.b);
 
         queuedCb->typeIndex = IDX_SET_RGB_LED;
+    }
+    else if (ctlHdr->type == packetTypes[IDX_SET_VIRTUAL_KEYBOARD]) {
+        BbGet8(&bb, &queuedCb->data.setVirtualKeyboard.visible);
+        BbGet8(&bb, &queuedCb->data.setVirtualKeyboard.inputHint);
+        BbGet16(&bb, &queuedCb->data.setVirtualKeyboard.x);
+        BbGet16(&bb, &queuedCb->data.setVirtualKeyboard.y);
+        BbGet16(&bb, &queuedCb->data.setVirtualKeyboard.width);
+        BbGet16(&bb, &queuedCb->data.setVirtualKeyboard.height);
+
+        queuedCb->typeIndex = IDX_SET_VIRTUAL_KEYBOARD;
     }
     else if (ctlHdr->type == packetTypes[IDX_HDR_INFO]) {
         queuedCb->typeIndex = IDX_HDR_INFO;

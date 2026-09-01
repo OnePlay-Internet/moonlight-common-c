@@ -62,6 +62,7 @@ static void fakeClSetHdrMode(bool enabled) {}
 static void fakeClRumbleTriggers(uint16_t controllerNumber, uint16_t leftTriggerMotor, uint16_t rightTriggerMotor) {}
 static void fakeClSetMotionEventState(uint16_t controllerNumber, uint8_t motionType, uint16_t reportRateHz) {}
 static void fakeClSetControllerLED(uint16_t controllerNumber, uint8_t r, uint8_t g, uint8_t b) {}
+static void fakeClSetVirtualKeyboard(uint8_t visible, uint8_t inputHint, uint16_t x, uint16_t y, uint16_t width, uint16_t height) {}
 
 static CONNECTION_LISTENER_CALLBACKS fakeClCallbacks = {
     .stageStarting = fakeClStageStarting,
@@ -76,6 +77,7 @@ static CONNECTION_LISTENER_CALLBACKS fakeClCallbacks = {
     .rumbleTriggers = fakeClRumbleTriggers,
     .setMotionEventState = fakeClSetMotionEventState,
     .setControllerLED = fakeClSetControllerLED,
+    .setVirtualKeyboard = fakeClSetVirtualKeyboard,
 };
 
 void fixupMissingCallbacks(PDECODER_RENDERER_CALLBACKS* drCallbacks, PAUDIO_RENDERER_CALLBACKS* arCallbacks,
@@ -189,6 +191,12 @@ void fixupMissingCallbacks(PDECODER_RENDERER_CALLBACKS* drCallbacks, PAUDIO_REND
         }
         if ((*clCallbacks)->setMotionEventState == NULL) {
             (*clCallbacks)->setMotionEventState = fakeClSetMotionEventState;
+        }
+        // A client that has not implemented this - every client, until it does - gets a
+        // no-op rather than a null call. This is what lets the host ship the message
+        // before any client handles it.
+        if ((*clCallbacks)->setVirtualKeyboard == NULL) {
+            (*clCallbacks)->setVirtualKeyboard = fakeClSetVirtualKeyboard;
         }
         if ((*clCallbacks)->setControllerLED == NULL) {
             (*clCallbacks)->setControllerLED = fakeClSetControllerLED;
