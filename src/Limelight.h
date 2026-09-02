@@ -567,6 +567,19 @@ typedef void(*ConnListenerSetVirtualKeyboard)(uint8_t visible, uint8_t inputHint
                                               uint16_t x, uint16_t y,
                                               uint16_t width, uint16_t height);
 
+// This callback is invoked when the host asks the client to open a URL, on behalf of a
+// game that needs the player to complete something outside it - an account link, a
+// purchase, a support page. Opening it on the host would put the page on a machine the
+// player cannot reach.
+//
+// url is NUL-terminated, valid only for the duration of the call, and always http or
+// https - the host rejects anything else before sending. Copy it if you need to keep it.
+//
+// Open it the way the platform normally opens a link, in the user's own browser. Do not
+// render it inside the streaming view: a page the player is expected to trust, and
+// possibly type credentials into, must show them the address bar their browser gives it.
+typedef void(*ConnListenerOpenUrl)(const char* url);
+
 typedef struct _CONNECTION_LISTENER_CALLBACKS {
     ConnListenerStageStarting stageStarting;
     ConnListenerStageComplete stageComplete;
@@ -583,6 +596,7 @@ typedef struct _CONNECTION_LISTENER_CALLBACKS {
     // Appended, never inserted: a client built against an older header and not rebuilt
     // would otherwise read the wrong member for every callback after the insertion point.
     ConnListenerSetVirtualKeyboard setVirtualKeyboard;
+    ConnListenerOpenUrl openUrl;
 } CONNECTION_LISTENER_CALLBACKS, *PCONNECTION_LISTENER_CALLBACKS;
 
 // Use this function to zero the connection callbacks when allocated on the stack or heap

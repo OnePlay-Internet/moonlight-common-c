@@ -63,6 +63,7 @@ static void fakeClRumbleTriggers(uint16_t controllerNumber, uint16_t leftTrigger
 static void fakeClSetMotionEventState(uint16_t controllerNumber, uint8_t motionType, uint16_t reportRateHz) {}
 static void fakeClSetControllerLED(uint16_t controllerNumber, uint8_t r, uint8_t g, uint8_t b) {}
 static void fakeClSetVirtualKeyboard(uint8_t visible, uint8_t inputHint, uint16_t x, uint16_t y, uint16_t width, uint16_t height) {}
+static void fakeClOpenUrl(const char* url) {}
 
 static CONNECTION_LISTENER_CALLBACKS fakeClCallbacks = {
     .stageStarting = fakeClStageStarting,
@@ -78,6 +79,7 @@ static CONNECTION_LISTENER_CALLBACKS fakeClCallbacks = {
     .setMotionEventState = fakeClSetMotionEventState,
     .setControllerLED = fakeClSetControllerLED,
     .setVirtualKeyboard = fakeClSetVirtualKeyboard,
+    .openUrl = fakeClOpenUrl,
 };
 
 void fixupMissingCallbacks(PDECODER_RENDERER_CALLBACKS* drCallbacks, PAUDIO_RENDERER_CALLBACKS* arCallbacks,
@@ -197,6 +199,9 @@ void fixupMissingCallbacks(PDECODER_RENDERER_CALLBACKS* drCallbacks, PAUDIO_REND
         // before any client handles it.
         if ((*clCallbacks)->setVirtualKeyboard == NULL) {
             (*clCallbacks)->setVirtualKeyboard = fakeClSetVirtualKeyboard;
+        }
+        if ((*clCallbacks)->openUrl == NULL) {
+            (*clCallbacks)->openUrl = fakeClOpenUrl;
         }
         if ((*clCallbacks)->setControllerLED == NULL) {
             (*clCallbacks)->setControllerLED = fakeClSetControllerLED;
