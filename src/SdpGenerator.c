@@ -5,6 +5,15 @@
 #define MAX_SDP_HEADER_LEN 128
 #define MAX_SDP_TAIL_LEN 128
 
+// Maximum video bitrate (Kbps) we will request when streaming to a REMOTE host
+// (e.g. over the internet / a mobile link). Neither the client nor the Sunshine
+// host performs true bandwidth-adaptive scaling -- the host encodes at whatever
+// bitrate we ask for -- so demanding the full desktop bitrate (often 20 Mbps for
+// 1080p60) overruns a constrained mobile uplink and the stream fails. Capping the
+// request keeps us conservative on remote links (closer to how Parsec behaves on a
+// constrained connection) while LAN streaming is left at the user's full bitrate.
+#define REMOTE_MAX_BITRATE_KBPS 20000
+
 typedef struct _SDP_OPTION {
     char name[MAX_OPTION_NAME_LEN + 1];
     void* payload;
@@ -333,6 +342,23 @@ static PSDP_OPTION getAttributesList(char*urlSafeAddr) {
     err |= addAttributeString(&optionHead, "x-nv-video[0].timeoutLengthMs", "7000");
     err |= addAttributeString(&optionHead, "x-nv-video[0].framesWithInvalidRefThreshold", "0");
 
+    // On a bandwidth-constrained remote link (e.g. mobile), do not demand the full
+    // configured desktop bitrate. The Sunshine host encodes at the bitrate we request
+    // (see x-ml-video.configuredBitrateKbps below), with no receiver-driven adaptation,
+    // so a 20 Mbps ask saturates a mobile uplink and the video stream never survives.
+    // Clamp the requested bitrate to a mobile-appropriate ceiling for remote streams;
+    // LAN streams keep the user's full bitrate. Tune REMOTE_MAX_BITRATE_KBPS if needed.
+    //
+    // Gate on the host actually being public (internet-routable) rather than only on the
+    // STREAM_CFG_REMOTE latch: a manual packet-size override forces STREAM_CFG_LOCAL, and
+    // we still want the cap to apply when we're crossing the internet to a mobile client.
+    if ((StreamConfig.streamingRemotely == STREAM_CFG_REMOTE || !isPrivateNetworkAddress(&RemoteAddr)) &&
+        StreamConfig.bitrate > REMOTE_MAX_BITRATE_KBPS) {
+        Limelog("Capping remote video bitrate from %d to %d Kbps for constrained link\n",
+                StreamConfig.bitrate, REMOTE_MAX_BITRATE_KBPS);
+        StreamConfig.bitrate = REMOTE_MAX_BITRATE_KBPS;
+    }
+
     // 20% of the video bitrate will added to the user-specified bitrate for FEC
     adjustedBitrate = (int)(StreamConfig.bitrate * 0.80);
 
@@ -369,6 +395,14 @@ static PSDP_OPTION getAttributesList(char*urlSafeAddr) {
         if (IS_SUNSHINE()) {
             snprintf(payloadStr, sizeof(payloadStr), "%u", StreamConfig.bitrate);
             err |= addAttributeString(&optionHead, "x-ml-video.configuredBitrateKbps", payloadStr);
+
+            // Advertise that this client tolerates host-driven adaptive bitrate. The OnePlay
+            // Sunshine host encodes with no reset and no forced keyframe when it lowers the
+            // rate, so an adapting stream is transparent to us. The host only engages its
+            // controller for clients that send this attribute; a client that omits it (any
+            // older build) keeps the fixed negotiated bitrate, so this is what lets new and
+            // old clients coexist against the same host.
+            err |= addAttributeString(&optionHead, "x-ml-video.adaptiveBitrate", "1");
         }
     }
     else {
