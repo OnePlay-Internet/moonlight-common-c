@@ -103,7 +103,16 @@ static void reportFinalFrameFecStatus(PRTP_VIDEO_QUEUE queue) {
     fecStatus.fecPercentage = (uint8_t)queue->fecPercentage;
     fecStatus.multiFecBlockIndex = (uint8_t)queue->multiFecCurrentBlockNumber;
     fecStatus.multiFecBlockCount = (uint8_t)(queue->multiFecLastBlockNumber + 1);
-    
+
+    // Accumulate for LiGetVideoNetworkStats(). Parity arrival is the useful
+    // signal here: parity shards are transmitted at the tail of each FEC block,
+    // so a queue that is dropping the end of every burst starves FEC long
+    // before frame-level loss becomes obvious.
+    VideoStatTotalDataPackets += queue->bufferDataPackets;
+    VideoStatTotalParityPackets += queue->bufferParityPackets;
+    VideoStatReceivedDataPackets += queue->receivedDataPackets;
+    VideoStatReceivedParityPackets += queue->receivedParityPackets;
+
     connectionSendFrameFecStatus(&fecStatus);
 }
 
@@ -341,6 +350,7 @@ static int reconstructFrame(PRTP_VIDEO_QUEUE queue) {
 #endif
         
         // Report the final FEC status if we needed to perform a recovery
+        VideoStatFramesRecovered++;
         reportFinalFrameFecStatus(queue);
     }
 
@@ -593,6 +603,7 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
             queue->multiFecCurrentBlockNumber != fecCurrentBlockNumber) {
         if (queue->pendingFecBlockList.count != 0) {
             // Report the final status of the FEC queue before dropping this frame
+            VideoStatFramesLost++;
             reportFinalFrameFecStatus(queue);
 
             if (queue->multiFecLastBlockNumber != 0) {
@@ -637,6 +648,7 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
         uint8_t expectedFecBlockNumber = (queue->currentFrameNumber == nvPacket->frameIndex ? queue->multiFecCurrentBlockNumber : 0);
         if (fecCurrentBlockNumber != expectedFecBlockNumber) {
             // Report the final status of the FEC queue before dropping this frame
+            VideoStatFramesLost++;
             reportFinalFrameFecStatus(queue);
 
             Limelog("Unrecoverable frame %d: lost FEC blocks %d to %d\n",

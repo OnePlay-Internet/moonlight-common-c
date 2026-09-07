@@ -152,6 +152,4 @@ int initializePlatform(void);
 void cleanupPlatform(void);
 
 uint64_t PltGetMillis(void);
-int64_t PltGetMicros(void);
-
 bool PltSafeStrcpy(char* dest, size_t dest_size, const char* src);

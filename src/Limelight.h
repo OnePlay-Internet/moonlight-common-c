@@ -43,7 +43,7 @@ extern "C" {
 // query parameter string. This is used to enable certain extended functionality
 // with Sunshine hosts. The returned string is owned by moonlight-common-c and
 // should not be freed by the caller.
-const char* LiGetLaunchUrlQueryParameters(bool enable);
+const char* LiGetLaunchUrlQueryParameters(void);
 
 typedef struct _STREAM_CONFIGURATION {
     // Dimensions in pixels of the desired video stream
@@ -418,8 +418,6 @@ typedef struct _AUDIO_CAPTURE_CALLBACKS {
 // Use this function to zero the audio callbacks when allocated on the stack or heap
 void LiInitializeAudioCaptureCallbacks(PAUDIO_CAPTURE_CALLBACKS acCallbacks);
 
-void PushAudio(uint16_t* CapturedFrame, int len);
-
 // Subject to change in future releases
 // Use LiGetStageName() for stable stage names
 
@@ -546,8 +544,41 @@ typedef void(*ConnListenerSetMotionEventState)(uint16_t controllerNumber, uint8_
 // This callback is invoked to set a controller's RGB LED (if present).
 typedef void(*ConnListenerSetControllerLED)(uint16_t controllerNumber, uint8_t r, uint8_t g, uint8_t b);
 
-// This callback is invoked to set server clipboard to client clipboard
-typedef void(*ConnListenerSetClipboard)(const char* data, uint32_t len);
+// This callback is invoked when the host asks the client to show or hide its on-screen
+// keyboard, on behalf of a game that has focused a text field. It only reaches clients
+// that actually have one to show - the host does not send it otherwise.
+//
+// If visible is 0 the host is asking for the keyboard to be dismissed, and the rectangle
+// should be ignored.
+//
+// The rectangle is where the game's text field sits, in the host's video resolution. A
+// client should pan or shift its view so the keyboard does not cover it; on a phone the
+// keyboard occupies the lower third of the screen and a field placed there would be
+// hidden by the very keyboard raised to fill it. An all-zero rectangle means the game did
+// not say, and the client should place the keyboard however it normally would.
+//
+// inputHint is 0 for text, 1 for numbers, 2 for an email address. A client that does not
+// distinguish them should treat every value as text rather than rejecting the message,
+// because more hints may be added later.
+//
+// Characters the user types are sent back through the ordinary keyboard input path, so no
+// separate text callback is involved and the game receives them as normal key events.
+typedef void(*ConnListenerSetVirtualKeyboard)(uint8_t visible, uint8_t inputHint,
+                                              uint16_t x, uint16_t y,
+                                              uint16_t width, uint16_t height);
+
+// This callback is invoked when the host asks the client to open a URL, on behalf of a
+// game that needs the player to complete something outside it - an account link, a
+// purchase, a support page. Opening it on the host would put the page on a machine the
+// player cannot reach.
+//
+// url is NUL-terminated, valid only for the duration of the call, and always http or
+// https - the host rejects anything else before sending. Copy it if you need to keep it.
+//
+// Open it the way the platform normally opens a link, in the user's own browser. Do not
+// render it inside the streaming view: a page the player is expected to trust, and
+// possibly type credentials into, must show them the address bar their browser gives it.
+typedef void(*ConnListenerOpenUrl)(const char* url);
 
 typedef struct _CONNECTION_LISTENER_CALLBACKS {
     ConnListenerStageStarting stageStarting;
@@ -562,7 +593,10 @@ typedef struct _CONNECTION_LISTENER_CALLBACKS {
     ConnListenerRumbleTriggers rumbleTriggers;
     ConnListenerSetMotionEventState setMotionEventState;
     ConnListenerSetControllerLED setControllerLED;
-    ConnListenerSetClipboard setClipboard;
+    // Appended, never inserted: a client built against an older header and not rebuilt
+    // would otherwise read the wrong member for every callback after the insertion point.
+    ConnListenerSetVirtualKeyboard setVirtualKeyboard;
+    ConnListenerOpenUrl openUrl;
 } CONNECTION_LISTENER_CALLBACKS, *PCONNECTION_LISTENER_CALLBACKS;
 
 // Use this function to zero the connection callbacks when allocated on the stack or heap
@@ -641,7 +675,28 @@ const char* LiGetStageName(int stage);
 // This function may only be called between LiStartConnection() and LiStopConnection().
 bool LiGetEstimatedRttInfo(uint32_t* estimatedRtt, uint32_t* estimatedRttVariance);
 
-bool LiShowMouseCursor(bool show);
+// Cumulative video network counters for the current connection.
+//
+// These are the numbers that distinguish "the link is lossy" from "the link is
+// saturated": a saturated path drops the tail of each frame's burst, which is
+// where the FEC parity shards sit, so parity arrival collapses while data
+// arrival still looks reasonable. Frame-level loss alone cannot show that.
+//
+// All counters are cumulative since connection start and never reset.
+typedef struct _LI_VIDEO_NETWORK_STATS {
+    uint32_t totalDataPackets;        // data shards the host said it sent
+    uint32_t totalParityPackets;      // parity shards the host said it sent
+    uint32_t receivedDataPackets;     // data shards that arrived
+    uint32_t receivedParityPackets;   // parity shards that arrived
+    uint32_t framesRecovered;         // frames FEC successfully repaired
+    uint32_t framesLost;              // frames FEC could not repair
+    uint32_t idrRequestsSent;         // full keyframe requests
+    uint32_t rfiRequestsSent;         // reference frame invalidation requests
+} LI_VIDEO_NETWORK_STATS, *PLI_VIDEO_NETWORK_STATS;
+
+// Fills in the counters above. Safe to call at any time from any thread; the
+// values are a consistent-enough snapshot for reporting, not for control.
+void LiGetVideoNetworkStats(PLI_VIDEO_NETWORK_STATS stats);
 
 // This function queues a relative mouse move event to be sent to the remote server.
 int LiSendMouseMoveEvent(short deltaX, short deltaY);
@@ -816,7 +871,7 @@ int LiSendUtf8TextEvent(const char *text, unsigned int length);
 // This function queues a controller event to be sent to the remote server. It will
 // be seen by the computer as the first controller.
 int LiSendControllerEvent(int buttonFlags, unsigned char leftTrigger, unsigned char rightTrigger,
-                          short leftStickX, short leftStickY, short rightStickX, short rightStickY);
+    short leftStickX, short leftStickY, short rightStickX, short rightStickY);
 
 // This function queues a controller event to be sent to the remote server. The controllerNumber
 // parameter is a zero-based index of which controller this event corresponds to. The largest legal
@@ -835,8 +890,8 @@ int LiSendControllerEvent(int buttonFlags, unsigned char leftTrigger, unsigned c
 // To indicate removal of a gamepad, send an empty event with the controller number set to the
 // removed controller and the bit of the removed controller cleared in the active gamepad mask.
 int LiSendMultiControllerEvent(short controllerNumber, short activeGamepadMask,
-                               int buttonFlags, unsigned char leftTrigger, unsigned char rightTrigger,
-                               short leftStickX, short leftStickY, short rightStickX, short rightStickY);
+    int buttonFlags, unsigned char leftTrigger, unsigned char rightTrigger,
+    short leftStickX, short leftStickY, short rightStickX, short rightStickY);
 
 // This function provides a method of informing the host of the available buttons and capabilities
 // on a new controller. This is the recommended approach for indicating the arrival of a new controller.

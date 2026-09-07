@@ -56,6 +56,8 @@ static void AudioPingThreadProc(void* context) {
         if (AudioPingPayload.payload[0] != 0) {
             pingCount++;
             AudioPingPayload.sequenceNumber = BE32(1);
+
+            Limelog("Sent Ping: Seq: %d", pingCount);
             sendto(rtpSocket, (char*)&AudioPingPayload, sizeof(AudioPingPayload), 0, (struct sockaddr*)&saddr, AddrLen);
         }
         else {
@@ -87,7 +89,7 @@ int initializeAudioStream(void) {
     return 0;
 }
 
-extern void SetAudioCaptureStreamSocket(SOCKET rtpsocket);
+extern void SetAudioCaptureStreamSocket(int rtpsocket);
 
 // This is called when the RTSP SETUP message is parsed and the audio port
 // number is parsed out of it. Alternatively, it's also called if parsing fails

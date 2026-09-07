@@ -3,16 +3,23 @@
 #include <opus.h>
 #include <stdbool.h>
 
+static bool captureThreadStarted;
+static PLT_THREAD captureThread;
+
 #define AUDIO_CAPTURE_FRAME_DURATION 10
 
 #define FREQ 48000
 #define FRAME_SAMPLE_COUNT AUDIO_CAPTURE_FRAME_DURATION *(FREQ / 1000)
-#define m_FrameSize FRAME_SAMPLE_COUNT * sizeof(short);
 
 static bool isMicToggled = false;
+static PLT_MUTEX isMicToggled_MTX;
+static PLT_COND isMicToggled_MTX_COND;
 
 int initializeAudioCaptureStream(void)
 {
+    PltCreateMutex(&isMicToggled_MTX);
+    PltCreateConditionVariable(&isMicToggled_MTX_COND, &isMicToggled_MTX);
+
     return 0;
 }
 
@@ -22,45 +29,78 @@ int notifyAudioCapturePortNegotiationComplete(void)
     return 0;
 }
 
-static bool IsAudioCaptureStarted;
 extern struct sockaddr_storage RemoteAddr;
 extern uint16_t AudioPortNumber;
-static SOCKET rtpSocket = 0;
-static unsigned char outFrame[1024];
-LC_SOCKADDR saddr;
-OpusEncoder* m_OpusEncoder;
+static int rtpSocket = 0;
 
-void PushAudio(uint16_t* CapturedFrame, int len){
-    if(!IsAudioCaptureStarted){
-        Limelog("Error: Audio Capture not Started!");
-        return;
+void audioCaptureThreadProc(void *context)
+{
+    Limelog("Audio Capture Thread Started");
+
+    isMicToggled = true;
+    uint16_t CapturedFrame[FRAME_SAMPLE_COUNT * 100];
+    uint32_t len = 0;
+
+    unsigned char outFrame[1024];
+    int encoded_len = 0;
+    LC_SOCKADDR saddr;
+
+    LC_ASSERT(AudioPortNumber != 0);
+
+    memcpy(&saddr, &RemoteAddr, sizeof(saddr));
+    SET_PORT(&saddr, AudioPortNumber);
+
+    PltLockMutex(&isMicToggled_MTX);
+    if(rtpSocket == 0){
+        PltWaitForConditionVariable(&isMicToggled_MTX_COND, &isMicToggled_MTX);
     }
-    int outLen = opus_encode(m_OpusEncoder,
-                          (opus_int16*)CapturedFrame,
-                          FRAME_SAMPLE_COUNT, // TBD: less than 10 ms will disable LPC or hybrid modes
-                          (unsigned char*)outFrame,
-                          FRAME_SAMPLE_COUNT //adjust this to set upper limit on bitrate
-                          );
+    PltUnlockMutex(&isMicToggled_MTX);
 
-        if (outLen < 0)
+    while (!PltIsThreadInterrupted(&captureThread))
+    {
+        PltLockMutex(&isMicToggled_MTX);
+        if(!isMicToggled){
+            PltWaitForConditionVariable(&isMicToggled_MTX_COND, &isMicToggled_MTX);
+        }
+        PltUnlockMutex(&isMicToggled_MTX);
+
+        if (len < FRAME_SAMPLE_COUNT * 2)
         {
-            Limelog("Encoding error: &d", outLen);
+            // SDL_LOG_INFO(0, "Waiting for capturing next frame\n");
+            PltSleepMs(AUDIO_CAPTURE_FRAME_DURATION);
+        }
+        if (!AudioCaptureCallbacks.captureMic((void *)&CapturedFrame, &len))
+            continue;
+
+        len -= FRAME_SAMPLE_COUNT * 2;
+        AudioCaptureCallbacks.encode((void *)CapturedFrame, FRAME_SAMPLE_COUNT, &outFrame, &encoded_len);
+
+        if (encoded_len < 0)
+        {
+            Limelog("Encoding error: &d", encoded_len);
+            continue;
         }
 
-        if(rtpSocket == 0) return;
-        sendto(rtpSocket, (char *)&outFrame, outLen, 0, (struct sockaddr *)&saddr, AddrLen);
+        if(rtpSocket == 0) break;
+        sendto(rtpSocket, (char *)&outFrame, encoded_len, 0, (struct sockaddr *)&saddr, AddrLen);
+    }
 }
 
 void destroyAudioCaptureStream(void)
 {
-
+    PltDeleteMutex(&isMicToggled_MTX);
+    PltDeleteConditionVariable(&isMicToggled_MTX_COND);
 }
 
-void SetAudioCaptureStreamSocket(SOCKET rtpsocket){
-    rtpSocket = rtpsocket;
+void SetAudioCaptureStreamSocket(int rtpsocket){
+    if(rtpsocket == 0){
+        rtpSocket = rtpsocket;
+    }else{
+        rtpSocket = rtpsocket;
+    }
 }
 
-int startAudioCaptureStream(void *audioCaptureContext, int arFlags)
+int startAudioCaptureStream(void *audioCaptureContext, int rtpsocket)
 {
     int err;
     OPUS_ENCODER_CONFIGURATION chosenConfig;
@@ -75,24 +115,17 @@ int startAudioCaptureStream(void *audioCaptureContext, int arFlags)
         return err;
     }
 
-    m_OpusEncoder = opus_encoder_create(
-         chosenConfig.sampleRate,
-         chosenConfig.channelCount,
-         chosenConfig.Application,
-        &err);
+    // Owais: This doesn't do anything but we will keep it just in case
+    AudioCaptureCallbacks.start();
 
-    if(m_OpusEncoder == NULL){
-        Limelog("Failed to create MIC encoder: %d", err);
+    err = PltCreateThread("AudioCapSend", audioCaptureThreadProc, NULL, &captureThread);
+    if (err != 0)
+    {
+        // AudioCaptureCallbacks.stop();
+        AudioCaptureCallbacks.cleanup();
         return err;
     }
-
-    memcpy(&saddr, &RemoteAddr, sizeof(saddr));
-    SET_PORT(&saddr, AudioPortNumber);
-
-    IsAudioCaptureStarted = true;
-
-    // Prepare to start capturing here
-    AudioCaptureCallbacks.start();
+    captureThreadStarted = true;
 
     return 0;
 }
@@ -101,24 +134,46 @@ void stopAudioCaptureStream(void)
 {
     AudioCaptureCallbacks.stop();
 
-    if(m_OpusEncoder != NULL){
-        opus_encoder_destroy(m_OpusEncoder);
-        m_OpusEncoder = NULL;
+    PltLockMutex(&isMicToggled_MTX);
+    if(!isMicToggled){
+        PltSignalConditionVariable(&isMicToggled_MTX_COND);
     }
-    
+    PltUnlockMutex(&isMicToggled_MTX);
+
+    if (captureThreadStarted)
+    {
+        PltInterruptThread(&captureThread);
+        PltJoinThread(&captureThread);
+        captureThreadStarted = false;
+    }
+    else
+    {
+        Limelog("Called stopAudioCaptureStream but capture thread already not running.");
+    }
+
     AudioCaptureCallbacks.cleanup();
-    IsAudioCaptureStarted = false;
 }
 
 int LiSendMicToggleEvent(bool isMuted)
 {
     char *data = isMuted ? "Mute" : "UnMute";
 
-    if (sendMicStatusPacketOnControlStream((unsigned char *)data, (int)strlen(data)) == -1)
+    if (sendMicStatusPacketOnControlStream((unsigned char *)data, strlen(data)) == -1)
     {
         Limelog("Error sending Mic Status on Control Stream.");
         return -1;
     }
 
+    PltLockMutex(&isMicToggled_MTX);
+    isMicToggled = !isMuted;
+    if(isMicToggled){
+        PltSignalConditionVariable(&isMicToggled_MTX_COND);
+    }
+    PltUnlockMutex(&isMicToggled_MTX);
     return 0;
 }
+// int LiGetPendingAudioFrames(void){}
+
+// int LiGetPendingAudioDuration(void){}
+
+// TODO: Expose required functions to c++

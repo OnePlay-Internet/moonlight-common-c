@@ -36,6 +36,15 @@ extern bool ReferenceFrameInvalidationSupported;
 
 extern uint16_t RtspPortNumber;
 extern uint16_t ControlPortNumber;
+
+extern uint32_t VideoStatTotalDataPackets;
+extern uint32_t VideoStatTotalParityPackets;
+extern uint32_t VideoStatReceivedDataPackets;
+extern uint32_t VideoStatReceivedParityPackets;
+extern uint32_t VideoStatFramesRecovered;
+extern uint32_t VideoStatFramesLost;
+extern uint32_t VideoStatIdrRequests;
+extern uint32_t VideoStatRfiRequests;
 extern uint16_t AudioPortNumber;
 extern uint16_t MicPortNumber;
 extern uint16_t VideoPortNumber;

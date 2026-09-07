@@ -12,6 +12,34 @@ struct sockaddr_storage RemoteAddr;
 struct sockaddr_storage LocalAddr;
 SOCKADDR_LEN AddrLen;
 int AppVersionQuad[4];
+
+// Cumulative video network counters. Plain uint32 rather than atomics: these
+// are incremented on the video receive thread and read on the reporting thread,
+// where a torn read costs nothing but a slightly stale number, and the
+// alternative would put a lock on the per-packet hot path.
+uint32_t VideoStatTotalDataPackets;
+uint32_t VideoStatTotalParityPackets;
+uint32_t VideoStatReceivedDataPackets;
+uint32_t VideoStatReceivedParityPackets;
+uint32_t VideoStatFramesRecovered;
+uint32_t VideoStatFramesLost;
+uint32_t VideoStatIdrRequests;
+uint32_t VideoStatRfiRequests;
+
+void LiGetVideoNetworkStats(PLI_VIDEO_NETWORK_STATS stats) {
+    if (stats == NULL) {
+        return;
+    }
+
+    stats->totalDataPackets = VideoStatTotalDataPackets;
+    stats->totalParityPackets = VideoStatTotalParityPackets;
+    stats->receivedDataPackets = VideoStatReceivedDataPackets;
+    stats->receivedParityPackets = VideoStatReceivedParityPackets;
+    stats->framesRecovered = VideoStatFramesRecovered;
+    stats->framesLost = VideoStatFramesLost;
+    stats->idrRequestsSent = VideoStatIdrRequests;
+    stats->rfiRequestsSent = VideoStatRfiRequests;
+}
 STREAM_CONFIGURATION StreamConfig;
 CONNECTION_LISTENER_CALLBACKS ListenerCallbacks;
 DECODER_RENDERER_CALLBACKS VideoCallbacks;
@@ -41,18 +69,18 @@ uint32_t EncryptionFeaturesEnabled;
 
 // Connection stages
 static const char* stageNames[STAGE_MAX] = {
-        "none",
-        "platform initialization",
-        "name resolution",
-        "audio stream initialization",
-        "RTSP handshake",
-        "control stream initialization",
-        "video stream initialization",
-        "input stream initialization",
-        "control stream establishment",
-        "video stream establishment",
-        "audio stream establishment",
-        "input stream establishment"
+    "none",
+    "platform initialization",
+    "name resolution",
+    "audio stream initialization",
+    "RTSP handshake",
+    "control stream initialization",
+    "video stream initialization",
+    "input stream initialization",
+    "control stream establishment",
+    "video stream establishment",
+    "audio stream establishment",
+    "input stream establishment"
 };
 
 // Get the name of the current stage based on its number
@@ -154,7 +182,7 @@ void LiStopConnection(void) {
         Limelog("done\n");
     }
     LC_ASSERT(stage == STAGE_NONE);
-
+    
     if (RemoteAddrString != NULL) {
         free(RemoteAddrString);
         RemoteAddrString = NULL;
@@ -295,6 +323,15 @@ int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION stre
     // The values in RTSP SETUP will be used to populate these.
     VideoPortNumber = 0;
     ControlPortNumber = 0;
+
+    VideoStatTotalDataPackets = 0;
+    VideoStatTotalParityPackets = 0;
+    VideoStatReceivedDataPackets = 0;
+    VideoStatReceivedParityPackets = 0;
+    VideoStatFramesRecovered = 0;
+    VideoStatFramesLost = 0;
+    VideoStatIdrRequests = 0;
+    VideoStatRfiRequests = 0;
     AudioPortNumber = 0;
 
 #ifdef DYNAMIC_PORTS
@@ -313,10 +350,10 @@ int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION stre
 #endif
     alreadyTerminated = false;
     ConnectionInterrupted = false;
-
+    
     // Validate the audio configuration
     if (MAGIC_BYTE_FROM_AUDIO_CONFIG(StreamConfig.audioConfiguration) != 0xCA ||
-        CHANNEL_COUNT_FROM_AUDIO_CONFIGURATION(StreamConfig.audioConfiguration) > AUDIO_CONFIGURATION_MAX_CHANNEL_COUNT) {
+            CHANNEL_COUNT_FROM_AUDIO_CONFIGURATION(StreamConfig.audioConfiguration) > AUDIO_CONFIGURATION_MAX_CHANNEL_COUNT) {
         Limelog("Invalid audio configuration specified\n");
         err = -1;
         goto Cleanup;
@@ -342,10 +379,10 @@ int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION stre
 
     // Dimensions over 4096 are only supported with HEVC on NVENC
     if (!(StreamConfig.supportedVideoFormats & ~VIDEO_FORMAT_MASK_H264) &&
-        (StreamConfig.width > 4096 || StreamConfig.height > 4096)) {
+            (StreamConfig.width > 4096 || StreamConfig.height > 4096)) {
         Limelog("WARNING: Streaming at resolutions above 4K using H.264 will likely fail! Trying anyway!\n");
     }
-        // Dimensions over 8192 aren't supported at all (even on Turing)
+    // Dimensions over 8192 aren't supported at all (even on Turing)
     else if (StreamConfig.width > 8192 || StreamConfig.height > 8192) {
         Limelog("WARNING: Streaming at resolutions above 8K will likely fail! Trying anyway!\n");
     }
@@ -355,12 +392,12 @@ int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION stre
     // resolutions will work and which won't, but we can at least exclude
     // 4K from RFI to avoid significant persistent artifacts after frame loss.
     if (StreamConfig.width == 3840 && StreamConfig.height == 2160 &&
-        (VideoCallbacks.capabilities & CAPABILITY_REFERENCE_FRAME_INVALIDATION_AVC) &&
-        !IS_SUNSHINE()) {
+            (VideoCallbacks.capabilities & CAPABILITY_REFERENCE_FRAME_INVALIDATION_AVC) &&
+            !IS_SUNSHINE()) {
         Limelog("Disabling reference frame invalidation for 4K streaming with GFE\n");
         VideoCallbacks.capabilities &= ~CAPABILITY_REFERENCE_FRAME_INVALIDATION_AVC;
     }
-
+    
     Limelog("Initializing platform...");
     ListenerCallbacks.stageStarting(STAGE_PLATFORM_INIT);
     err = initializePlatform();
@@ -463,9 +500,9 @@ int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION stre
     ListenerCallbacks.stageComplete(STAGE_AUDIO_STREAM_INIT);
     Limelog("done\n");
 
-        // -----------Audio capture Stream Init Start-----------
+    // -----------Audio capture Stream Init Start-----------
 #ifdef MICROPHONE_FEATURE
-        Limelog("Initializing audio capture stream...");
+    Limelog("Initializing audio capture stream...");
     ListenerCallbacks.stageStarting(STAGE_AUDIO_CAPTURE_STREAM_INIT);
     err = initializeAudioCaptureStream();
     if (err != 0) {
@@ -565,9 +602,9 @@ int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION stre
     ListenerCallbacks.stageComplete(STAGE_AUDIO_STREAM_START);
     Limelog("done\n");
 
-        // -----------Audio capture Stream Start-----------
+    // -----------Audio capture Stream Start-----------
 #ifdef MICROPHONE_FEATURE
-        Limelog("Starting audio capture stream...");
+    Limelog("Starting audio capture stream...");
     ListenerCallbacks.stageStarting(STAGE_AUDIO_CAPTURE_STREAM_START);
     //TODO: check Audio Context and AcFlags
     err = startAudioCaptureStream(audioContext, arFlags);
@@ -598,7 +635,7 @@ int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION stre
     LC_ASSERT(stage == STAGE_INPUT_STREAM_START);
     ListenerCallbacks.stageComplete(STAGE_INPUT_STREAM_START);
     Limelog("done\n");
-
+    
     // Wiggle the mouse a bit to wake the display up
     LiSendMouseMoveEvent(1, 1);
     PltSleepMs(10);
@@ -607,7 +644,7 @@ int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION stre
 
     ListenerCallbacks.connectionStarted();
 
-    Cleanup:
+Cleanup:
     if (err != 0) {
         // Undo any work we've done here before failing
         LiStopConnection();
@@ -615,11 +652,8 @@ int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION stre
     return err;
 }
 
-const char* LiGetLaunchUrlQueryParameters(bool enable) {
-// v0 = Video encryption and control stream encryption v2
-// v1 = RTSP encryption
-    if(enable)
-        return "&corever=125";
-    else
-        return "&corever=0";
+const char* LiGetLaunchUrlQueryParameters(void) {
+    // v0 = Video encryption and control stream encryption v2
+    // v1 = RTSP encryption
+    return "&corever=1";
 }

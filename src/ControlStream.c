@@ -66,10 +66,20 @@ typedef struct _QUEUED_ASYNC_CALLBACK {
             uint8_t g;
             uint8_t b;
         } setControllerLed;
-        struct{
-            uint32_t length;
-            char* text;
-        } setClipboard;
+        struct {
+            uint16_t x;
+            uint16_t y;
+            uint16_t width;
+            uint16_t height;
+            uint8_t visible;
+            uint8_t inputHint;
+        } setVirtualKeyboard;
+        struct {
+            // Owned by this entry and freed with it. Every other event fits the union;
+            // a URL does not, and truncating one into a fixed buffer would produce a link
+            // that silently goes somewhere else.
+            char* url;
+        } openUrl;
     } data;
     LINKED_BLOCKING_QUEUE_ENTRY entry;
 } QUEUED_ASYNC_CALLBACK, *PQUEUED_ASYNC_CALLBACK;
@@ -128,13 +138,10 @@ static PPLT_CRYPTO_CONTEXT decryptionCtx;
 #define IDX_SET_RGB_LED 11
 #define IDX_TOGGLE_MIC 12
 #define IDX_TOGGLE_MOUSE 13
-#define IDX_CLIPBOARD 14
+#define IDX_SET_VIRTUAL_KEYBOARD 14
+#define IDX_OPEN_URL 15
 
-// 30s, not the upstream 10s: raised by 834baa6 to fix intermittent "Session
-// Initiation" failures where a slow host handshake tripped the timeout. b9c4fe7
-// ("Add mouse toggle") put it back to 10 as collateral -- that commit's subject
-// has nothing to do with timeouts -- which silently undid the fix. Restored.
-#define CONTROL_STREAM_TIMEOUT_SEC 30
+#define CONTROL_STREAM_TIMEOUT_SEC 10
 #define CONTROL_STREAM_LINGER_TIMEOUT_SEC 2
 
 static const short packetTypesGen3[] = {
@@ -150,6 +157,10 @@ static const short packetTypesGen3[] = {
     -1,     // Rumble triggers (unused)
     -1,     // Set motion event (unused)
     -1,     // Set RGB LED (unused)
+    -1,     // Mic Toggle (unused)
+    -1,     // Mouse Toggle (unused)
+    -1,     // Set virtual keyboard (unused)
+    -1,     // Open URL (unused)
 };
 static const short packetTypesGen4[] = {
     0x0606, // Request IDR frame
@@ -164,6 +175,10 @@ static const short packetTypesGen4[] = {
     -1,     // Rumble triggers (unused)
     -1,     // Set motion event (unused)
     -1,     // Set RGB LED (unused)
+    -1,     // Mic Toggle (unused)
+    -1,     // Mouse Toggle (unused)
+    -1,     // Set virtual keyboard (unused)
+    -1,     // Open URL (unused)
 };
 static const short packetTypesGen5[] = {
     0x0305, // Start A
@@ -178,6 +193,10 @@ static const short packetTypesGen5[] = {
     -1,     // Rumble triggers (unused)
     -1,     // Set motion event (unused)
     -1,     // Set RGB LED (unused)
+    -1,     // Mic Toggle (unused)
+    -1,     // Mouse Toggle (unused)
+    -1,     // Set virtual keyboard (unused)
+    -1,     // Open URL (unused)
 };
 static const short packetTypesGen7[] = {
     0x0305, // Start A
@@ -193,6 +212,9 @@ static const short packetTypesGen7[] = {
     -1,     // Set motion event (unused)
     -1,     // Set RGB LED (unused)
     0x0108, // Mic Toggle
+    -1,     // Mouse Toggle (unused)
+    -1,     // Set virtual keyboard (unused)
+    -1,     // Open URL (unused)
 };
 static const short packetTypesGen7Enc[] = {
     0x0302, // Request IDR frame
@@ -208,8 +230,9 @@ static const short packetTypesGen7Enc[] = {
     0x5501, // Set motion event (Sunshine protocol extension)
     0x5502, // Set RGB LED (Sunshine protocol extension)
     0x0108, // Mic Toggle
-    0x0110, // Mouse Toggle
-    0x0111, // Clipboard
+    0x5503, // Mouse Toggle (Sunshine protocol extension)
+    0x5504, // Set virtual keyboard (Sunshine protocol extension)
+    0x5505, // Open URL (Sunshine protocol extension)
 };
 
 static const char requestIdrFrameGen3[] = { 0, 0 };
@@ -983,9 +1006,23 @@ static void asyncCallbackThreadFunc(void* context) {
                                                   queuedCb->data.setMotionEventState.motionType,
                                                   queuedCb->data.setMotionEventState.reportRateHz);
             break;
-        case IDX_CLIPBOARD:
-            ListenerCallbacks.setClipboard(queuedCb->data.setClipboard.text, queuedCb->data.setClipboard.length);
-            free(queuedCb->data.setClipboard.text);
+
+        case IDX_OPEN_URL:
+            // Not batched: two URLs are two different pages, and the player asked for both.
+            ListenerCallbacks.openUrl(queuedCb->data.openUrl.url);
+            free(queuedCb->data.openUrl.url);
+            break;
+
+        case IDX_SET_VIRTUAL_KEYBOARD:
+            // Not batched. A show followed by a hide are different instructions, and
+            // collapsing them would leave the keyboard in whichever state arrived last
+            // rather than the state the game actually asked for.
+            ListenerCallbacks.setVirtualKeyboard(queuedCb->data.setVirtualKeyboard.visible,
+                                                 queuedCb->data.setVirtualKeyboard.inputHint,
+                                                 queuedCb->data.setVirtualKeyboard.x,
+                                                 queuedCb->data.setVirtualKeyboard.y,
+                                                 queuedCb->data.setVirtualKeyboard.width,
+                                                 queuedCb->data.setVirtualKeyboard.height);
             break;
         default:
             // Unhandled packet type from queueAsyncCallback()
@@ -1002,8 +1039,9 @@ static bool needsAsyncCallback(unsigned short packetType) {
            packetType == packetTypes[IDX_RUMBLE_TRIGGER_DATA] ||
            packetType == packetTypes[IDX_SET_MOTION_EVENT] ||
            packetType == packetTypes[IDX_SET_RGB_LED] ||
-           packetType == packetTypes[IDX_HDR_INFO] ||
-           packetType == packetTypes[IDX_CLIPBOARD];
+           packetType == packetTypes[IDX_SET_VIRTUAL_KEYBOARD] ||
+           packetType == packetTypes[IDX_OPEN_URL] ||
+           packetType == packetTypes[IDX_HDR_INFO];
 }
 
 static void queueAsyncCallback(PNVCTL_ENET_PACKET_HEADER_V1 ctlHdr, int packetLength) {
@@ -1051,15 +1089,43 @@ static void queueAsyncCallback(PNVCTL_ENET_PACKET_HEADER_V1 ctlHdr, int packetLe
 
         queuedCb->typeIndex = IDX_SET_RGB_LED;
     }
+    else if (ctlHdr->type == packetTypes[IDX_SET_VIRTUAL_KEYBOARD]) {
+        BbGet8(&bb, &queuedCb->data.setVirtualKeyboard.visible);
+        BbGet8(&bb, &queuedCb->data.setVirtualKeyboard.inputHint);
+        BbGet16(&bb, &queuedCb->data.setVirtualKeyboard.x);
+        BbGet16(&bb, &queuedCb->data.setVirtualKeyboard.y);
+        BbGet16(&bb, &queuedCb->data.setVirtualKeyboard.width);
+        BbGet16(&bb, &queuedCb->data.setVirtualKeyboard.height);
+
+        queuedCb->typeIndex = IDX_SET_VIRTUAL_KEYBOARD;
+    }
+    else if (ctlHdr->type == packetTypes[IDX_OPEN_URL]) {
+        uint16_t urlLength = 0;
+
+        BbGet16(&bb, &urlLength);
+
+        // Trust the length only as far as the bytes we were actually handed.
+        int available = packetLength - (int)sizeof(*ctlHdr) - (int)sizeof(urlLength);
+        if (available < 0 || urlLength > available || urlLength == 0) {
+            Limelog("Discarding malformed URL message\n");
+            free(queuedCb);
+            return;
+        }
+
+        queuedCb->data.openUrl.url = malloc(urlLength + 1);
+        if (!queuedCb->data.openUrl.url) {
+            free(queuedCb);
+            return;
+        }
+
+        memcpy(queuedCb->data.openUrl.url,
+               (char*)ctlHdr + sizeof(*ctlHdr) + sizeof(urlLength), urlLength);
+        queuedCb->data.openUrl.url[urlLength] = '\0';
+
+        queuedCb->typeIndex = IDX_OPEN_URL;
+    }
     else if (ctlHdr->type == packetTypes[IDX_HDR_INFO]) {
         queuedCb->typeIndex = IDX_HDR_INFO;
-    }
-    else if(ctlHdr->type == packetTypes[IDX_CLIPBOARD]){
-        queuedCb->typeIndex = IDX_CLIPBOARD;
-        char* text = malloc(bb.length);
-        memcpy(text, bb.buffer, bb.length);
-        queuedCb->data.setClipboard.text = text;
-        queuedCb->data.setClipboard.length = bb.length;
     }
     else {
         // Unhandled packet type from needsAsyncCallback()
@@ -1506,6 +1572,7 @@ static void requestIdrFrame(void) {
         }
     }
 
+    VideoStatIdrRequests++;
     Limelog("IDR frame request sent\n");
 }
 
@@ -1530,6 +1597,7 @@ static void requestInvalidateReferenceFrames(uint32_t startFrame, uint32_t endFr
         return;
     }
 
+    VideoStatRfiRequests++;
     Limelog("Invalidate reference frame request sent (%d to %d)\n", startFrame, endFrame);
 }
 
@@ -1644,6 +1712,12 @@ int sendInputPacketOnControlStream(unsigned char* data, int length, uint8_t chan
 
 int sendMicStatusPacketOnControlStream(unsigned char* data, int length){
 
+    // Older host generations have no packet type for this message.
+    if (packetTypes[IDX_TOGGLE_MIC] == -1) {
+        Limelog("Mic toggle is not supported by this host\n");
+        return -1;
+    }
+
     Limelog("len of the mic send %d", length);
     if(sendMessageAndForget(packetTypes[IDX_TOGGLE_MIC], length, data, CTRL_CHANNEL_UTF8, ENET_PACKET_FLAG_RELIABLE, false) == 0)
     {
@@ -1677,9 +1751,15 @@ bool isControlDataInTransit(void) {
 }
 
 bool LiShowMouseCursor(bool show){
-    char data = show ? 'R' : 'A';
+    char *data = show ? "Relative" : "Absolute";
 
-    if(sendMessageAndForget(packetTypes[IDX_TOGGLE_MOUSE], 1, &data, CTRL_CHANNEL_UTF8, ENET_PACKET_FLAG_RELIABLE, false) == 0)
+    // Older host generations have no packet type for this message.
+    if (packetTypes[IDX_TOGGLE_MOUSE] == -1) {
+        Limelog("Mouse cursor toggle is not supported by this host\n");
+        return false;
+    }
+
+    if(sendMessageAndForget(packetTypes[IDX_TOGGLE_MOUSE], strlen(data), data, CTRL_CHANNEL_UTF8, ENET_PACKET_FLAG_RELIABLE, false) == 0)
     {
         Limelog("Error sending Mouse Mode on Control Stream.");
         return false;
