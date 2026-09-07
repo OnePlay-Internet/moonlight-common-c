@@ -544,6 +544,42 @@ typedef void(*ConnListenerSetMotionEventState)(uint16_t controllerNumber, uint8_
 // This callback is invoked to set a controller's RGB LED (if present).
 typedef void(*ConnListenerSetControllerLED)(uint16_t controllerNumber, uint8_t r, uint8_t g, uint8_t b);
 
+// This callback is invoked when the host asks the client to show or hide its on-screen
+// keyboard, on behalf of a game that has focused a text field. It only reaches clients
+// that actually have one to show - the host does not send it otherwise.
+//
+// If visible is 0 the host is asking for the keyboard to be dismissed, and the rectangle
+// should be ignored.
+//
+// The rectangle is where the game's text field sits, in the host's video resolution. A
+// client should pan or shift its view so the keyboard does not cover it; on a phone the
+// keyboard occupies the lower third of the screen and a field placed there would be
+// hidden by the very keyboard raised to fill it. An all-zero rectangle means the game did
+// not say, and the client should place the keyboard however it normally would.
+//
+// inputHint is 0 for text, 1 for numbers, 2 for an email address. A client that does not
+// distinguish them should treat every value as text rather than rejecting the message,
+// because more hints may be added later.
+//
+// Characters the user types are sent back through the ordinary keyboard input path, so no
+// separate text callback is involved and the game receives them as normal key events.
+typedef void(*ConnListenerSetVirtualKeyboard)(uint8_t visible, uint8_t inputHint,
+                                              uint16_t x, uint16_t y,
+                                              uint16_t width, uint16_t height);
+
+// This callback is invoked when the host asks the client to open a URL, on behalf of a
+// game that needs the player to complete something outside it - an account link, a
+// purchase, a support page. Opening it on the host would put the page on a machine the
+// player cannot reach.
+//
+// url is NUL-terminated, valid only for the duration of the call, and always http or
+// https - the host rejects anything else before sending. Copy it if you need to keep it.
+//
+// Open it the way the platform normally opens a link, in the user's own browser. Do not
+// render it inside the streaming view: a page the player is expected to trust, and
+// possibly type credentials into, must show them the address bar their browser gives it.
+typedef void(*ConnListenerOpenUrl)(const char* url);
+
 typedef struct _CONNECTION_LISTENER_CALLBACKS {
     ConnListenerStageStarting stageStarting;
     ConnListenerStageComplete stageComplete;
@@ -557,6 +593,10 @@ typedef struct _CONNECTION_LISTENER_CALLBACKS {
     ConnListenerRumbleTriggers rumbleTriggers;
     ConnListenerSetMotionEventState setMotionEventState;
     ConnListenerSetControllerLED setControllerLED;
+    // Appended, never inserted: a client built against an older header and not rebuilt
+    // would otherwise read the wrong member for every callback after the insertion point.
+    ConnListenerSetVirtualKeyboard setVirtualKeyboard;
+    ConnListenerOpenUrl openUrl;
 } CONNECTION_LISTENER_CALLBACKS, *PCONNECTION_LISTENER_CALLBACKS;
 
 // Use this function to zero the connection callbacks when allocated on the stack or heap
