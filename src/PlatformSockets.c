@@ -359,6 +359,54 @@ SOCKET bindUdpSocket(int addressFamily, struct sockaddr_storage* localAddr, SOCK
         setSocketQos(s, socketQosType);
     }
 
+    // Set the don't-fragment bit on outgoing datagrams (best effort). A packet that exceeds the
+    // path MTU - e.g. on a cellular/VPN tunnel with a reduced MTU - is then dropped rather than
+    // silently fragmented, which would otherwise turn one lost fragment into a whole lost packet.
+    // We only send small packets on these sockets, so this is defensive hygiene; failures are
+    // ignored since the platform may not support it.
+#if defined(LC_WINDOWS)
+    {
+        DWORD dfVal = IP_PMTUDISC_DO;
+        if (addressFamily == AF_INET) {
+            if (setsockopt(s, IPPROTO_IP, IP_MTU_DISCOVER, (char*)&dfVal, sizeof(dfVal)) < 0) {
+                Limelog("setsockopt(IP_MTU_DISCOVER, IP_PMTUDISC_DO) failed: %d\n", (int)LastSocketError());
+            }
+        }
+        else {
+            if (setsockopt(s, IPPROTO_IPV6, IPV6_MTU_DISCOVER, (char*)&dfVal, sizeof(dfVal)) < 0) {
+                Limelog("setsockopt(IPV6_MTU_DISCOVER, IP_PMTUDISC_DO) failed: %d\n", (int)LastSocketError());
+            }
+        }
+    }
+#elif defined(IP_MTU_DISCOVER)
+    // Linux and similar
+    {
+        int dfVal = IP_PMTUDISC_DO;
+        if (addressFamily == AF_INET) {
+            setsockopt(s, IPPROTO_IP, IP_MTU_DISCOVER, &dfVal, sizeof(dfVal));
+        }
+#ifdef IPV6_MTU_DISCOVER
+        else {
+            int df6Val = IPV6_PMTUDISC_DO;
+            setsockopt(s, IPPROTO_IPV6, IPV6_MTU_DISCOVER, &df6Val, sizeof(df6Val));
+        }
+#endif
+    }
+#elif defined(IP_DONTFRAG)
+    // macOS/iOS and BSD
+    {
+        int dfVal = 1;
+        if (addressFamily == AF_INET) {
+            setsockopt(s, IPPROTO_IP, IP_DONTFRAG, &dfVal, sizeof(dfVal));
+        }
+#ifdef IPV6_DONTFRAG
+        else {
+            setsockopt(s, IPPROTO_IPV6, IPV6_DONTFRAG, &dfVal, sizeof(dfVal));
+        }
+#endif
+    }
+#endif
+
 #ifdef __3DS__
     if (bufferSize == 0 || bufferSize > n3ds_max_buf_size)
         bufferSize = n3ds_max_buf_size;
