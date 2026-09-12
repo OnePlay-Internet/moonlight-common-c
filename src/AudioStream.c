@@ -55,7 +55,13 @@ static void AudioPingThreadProc(void* context) {
     while (!PltIsThreadInterrupted(&udpPingThread)) {
         if (AudioPingPayload.payload[0] != 0) {
             pingCount++;
-            AudioPingPayload.sequenceNumber = BE32(1);
+            // Must advance. This was BE32(pingCount) until c1160d1 pinned it
+            // to 1, which sends an identical datagram twice a second for the
+            // life of the session -- indistinguishable from a duplicate or a
+            // replay, and nothing the host can order. VideoPingPayload still
+            // uses the running count; audio was the only one changed, and
+            // audio is the only stream that intermittently fails to start.
+            AudioPingPayload.sequenceNumber = BE32(pingCount);
 
             // Logged sparsely -- at a 500 ms interval this is one line a
             // minute. The previous per-ping line was affordable only because
