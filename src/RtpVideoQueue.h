@@ -36,6 +36,10 @@ typedef struct _RTP_VIDEO_QUEUE {
     uint32_t missingPackets; // # of holes behind receivedHighestSequenceNumber
     bool useFastQueuePath;
     bool reportedLostFrame;
+    // Set once the current FEC block has been folded into the global packet
+    // counters, so a block that hits more than one finalization path is only
+    // counted once. Cleared when a new block starts.
+    bool fecBlockStatsAccounted;
 
     uint32_t currentFrameNumber;
 

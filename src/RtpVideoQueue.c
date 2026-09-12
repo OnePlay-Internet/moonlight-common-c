@@ -89,6 +89,32 @@ static void removeEntryFromList(PRTPV_QUEUE_LIST list, PRTPV_QUEUE_ENTRY entry) 
     list->count--;
 }
 
+// Accumulate one finalized FEC block into the counters behind
+// LiGetVideoNetworkStats(). Must be called exactly once per block, on every
+// block -- clean, FEC-recovered, and lost alike. Counting only the damaged
+// blocks (which is what reportFinalFrameFecStatus() below covers) makes the
+// derived loss and parity-arrival percentages describe the damaged subset
+// rather than the link, which reads as catastrophic loss on a healthy stream.
+//
+// The per-block counters are zeroed when a block starts (see RtpvAddPacket),
+// so accumulating at finalization cannot double count.
+static void accumulateFecBlockStats(PRTP_VIDEO_QUEUE queue) {
+    // A dropped block can reach both loss paths in a single RtpvAddPacket()
+    // call (a single-block frame falls through the first to the second), so
+    // this guards against counting the same block twice. The block's own
+    // counters are deliberately left intact -- the Limelog() lines on those
+    // paths print them after this returns.
+    if (queue->fecBlockStatsAccounted) {
+        return;
+    }
+    queue->fecBlockStatsAccounted = true;
+
+    VideoStatTotalDataPackets += queue->bufferDataPackets;
+    VideoStatTotalParityPackets += queue->bufferParityPackets;
+    VideoStatReceivedDataPackets += queue->receivedDataPackets;
+    VideoStatReceivedParityPackets += queue->receivedParityPackets;
+}
+
 static void reportFinalFrameFecStatus(PRTP_VIDEO_QUEUE queue) {
     SS_FRAME_FEC_STATUS fecStatus;
     
@@ -103,15 +129,6 @@ static void reportFinalFrameFecStatus(PRTP_VIDEO_QUEUE queue) {
     fecStatus.fecPercentage = (uint8_t)queue->fecPercentage;
     fecStatus.multiFecBlockIndex = (uint8_t)queue->multiFecCurrentBlockNumber;
     fecStatus.multiFecBlockCount = (uint8_t)(queue->multiFecLastBlockNumber + 1);
-
-    // Accumulate for LiGetVideoNetworkStats(). Parity arrival is the useful
-    // signal here: parity shards are transmitted at the tail of each FEC block,
-    // so a queue that is dropping the end of every burst starves FEC long
-    // before frame-level loss becomes obvious.
-    VideoStatTotalDataPackets += queue->bufferDataPackets;
-    VideoStatTotalParityPackets += queue->bufferParityPackets;
-    VideoStatReceivedDataPackets += queue->receivedDataPackets;
-    VideoStatReceivedParityPackets += queue->receivedParityPackets;
 
     connectionSendFrameFecStatus(&fecStatus);
 }
@@ -601,9 +618,22 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
     // if we can't finish a frame before receiving the next one.
     if (queue->pendingFecBlockList.count == 0 || queue->currentFrameNumber != nvPacket->frameIndex ||
             queue->multiFecCurrentBlockNumber != fecCurrentBlockNumber) {
+        // Both loss paths below can run for the same abandoned frame in a single
+        // call: a single-block frame does not return from the first, and falls
+        // into the second. Counting the frame lost in both inflated
+        // frames_fec_lost. This is scoped to the call rather than reusing
+        // queue->fecBlockStatsAccounted, because that flag tracks the block the
+        // queue currently describes -- which on the second path may be an
+        // already-accounted block while the frame being reported lost is a
+        // different, skipped one.
+        bool countedFrameLoss = false;
         if (queue->pendingFecBlockList.count != 0) {
             // Report the final status of the FEC queue before dropping this frame
-            VideoStatFramesLost++;
+            if (!countedFrameLoss) {
+                VideoStatFramesLost++;
+                countedFrameLoss = true;
+            }
+            accumulateFecBlockStats(queue);
             reportFinalFrameFecStatus(queue);
 
             if (queue->multiFecLastBlockNumber != 0) {
@@ -648,7 +678,11 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
         uint8_t expectedFecBlockNumber = (queue->currentFrameNumber == nvPacket->frameIndex ? queue->multiFecCurrentBlockNumber : 0);
         if (fecCurrentBlockNumber != expectedFecBlockNumber) {
             // Report the final status of the FEC queue before dropping this frame
-            VideoStatFramesLost++;
+            if (!countedFrameLoss) {
+                VideoStatFramesLost++;
+                countedFrameLoss = true;
+            }
+            accumulateFecBlockStats(queue);
             reportFinalFrameFecStatus(queue);
 
             Limelog("Unrecoverable frame %d: lost FEC blocks %d to %d\n",
@@ -707,6 +741,7 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
         queue->nextContiguousSequenceNumber = queue->bufferLowestSequenceNumber;
         queue->receivedDataPackets = 0;
         queue->receivedParityPackets = 0;
+        queue->fecBlockStatsAccounted = false;
         queue->receivedHighestSequenceNumber = 0;
         queue->missingPackets = 0;
         queue->useFastQueuePath = true;
@@ -778,6 +813,11 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
         // Try to submit this frame. If we haven't received enough packets,
         // this will fail and we'll keep waiting.
         if (reconstructFrame(queue) == 0) {
+            // Account for this block before staging it. reconstructFrame()
+            // returns 0 for both an intact block and one rebuilt from parity,
+            // so this is the single success-side finalization point.
+            accumulateFecBlockStats(queue);
+
             // Stage the complete FEC block for use once reassembly is complete
             stageCompleteFecBlock(queue);
             
