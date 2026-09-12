@@ -98,7 +98,7 @@ static void removeEntryFromList(PRTPV_QUEUE_LIST list, PRTPV_QUEUE_ENTRY entry) 
 //
 // The per-block counters are zeroed when a block starts (see RtpvAddPacket),
 // so accumulating at finalization cannot double count.
-static void accumulateFecBlockStats(PRTP_VIDEO_QUEUE queue) {
+static void accumulateFecBlockStats(PRTP_VIDEO_QUEUE queue, bool waitedForParity) {
     // A dropped block can reach both loss paths in a single RtpvAddPacket()
     // call (a single-block frame falls through the first to the second), so
     // this guards against counting the same block twice. The block's own
@@ -110,9 +110,20 @@ static void accumulateFecBlockStats(PRTP_VIDEO_QUEUE queue) {
     queue->fecBlockStatsAccounted = true;
 
     VideoStatTotalDataPackets += queue->bufferDataPackets;
-    VideoStatTotalParityPackets += queue->bufferParityPackets;
     VideoStatReceivedDataPackets += queue->receivedDataPackets;
-    VideoStatReceivedParityPackets += queue->receivedParityPackets;
+
+    // Parity is only counted for blocks that actually waited on it. A block
+    // whose data all arrived is finalized the moment the last data shard lands
+    // (see the early return in reconstructFrame), which is before the parity
+    // shards -- transmitted after the data -- have had any chance to arrive.
+    // Counting those blocks' expected parity in the denominator makes
+    // fec_parity_received_percent approach zero on a perfectly healthy link,
+    // and drags packet_loss_percent up with it, because the parity that was
+    // never waited for is indistinguishable from parity that was dropped.
+    if (waitedForParity) {
+        VideoStatTotalParityPackets += queue->bufferParityPackets;
+        VideoStatReceivedParityPackets += queue->receivedParityPackets;
+    }
 }
 
 static void reportFinalFrameFecStatus(PRTP_VIDEO_QUEUE queue) {
@@ -633,7 +644,9 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
                 VideoStatFramesLost++;
                 countedFrameLoss = true;
             }
-            accumulateFecBlockStats(queue);
+            // This block was held until the next frame displaced it, so its
+            // parity was due and its absence is real loss.
+            accumulateFecBlockStats(queue, true);
             reportFinalFrameFecStatus(queue);
 
             if (queue->multiFecLastBlockNumber != 0) {
@@ -682,7 +695,9 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
                 VideoStatFramesLost++;
                 countedFrameLoss = true;
             }
-            accumulateFecBlockStats(queue);
+            // This block was held until the next frame displaced it, so its
+            // parity was due and its absence is real loss.
+            accumulateFecBlockStats(queue, true);
             reportFinalFrameFecStatus(queue);
 
             Limelog("Unrecoverable frame %d: lost FEC blocks %d to %d\n",
@@ -815,8 +830,11 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
         if (reconstructFrame(queue) == 0) {
             // Account for this block before staging it. reconstructFrame()
             // returns 0 for both an intact block and one rebuilt from parity,
-            // so this is the single success-side finalization point.
-            accumulateFecBlockStats(queue);
+            // so this is the single success-side finalization point. Only the
+            // rebuilt case waited on parity -- an intact block returns as soon
+            // as its last data shard arrives, before any parity is due.
+            accumulateFecBlockStats(queue,
+                                    queue->receivedDataPackets < queue->bufferDataPackets);
 
             // Stage the complete FEC block for use once reassembly is complete
             stageCompleteFecBlock(queue);
