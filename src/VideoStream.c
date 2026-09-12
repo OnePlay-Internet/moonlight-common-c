@@ -77,7 +77,11 @@ static void VideoPingThreadProc(void* context) {
             sendto(rtpSocket, legacyPingData, sizeof(legacyPingData), 0, (struct sockaddr*)&saddr, AddrLen);
         }
 
-        if(receivedDataFromPeer) return;
+        // NB: This deliberately keeps pinging for the life of the session --
+        // see the matching comment in AudioStream.c. Video is inbound-only once
+        // the stream is up, so these datagrams are the only thing holding the
+        // NAT/firewall UDP mapping open. stopVideoStream() interrupts and joins
+        // this thread, so running for the whole session does not leak it.
         PltSleepMsInterruptible(&udpPingThread, 500);
     }
 }
