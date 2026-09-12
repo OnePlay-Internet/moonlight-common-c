@@ -57,14 +57,28 @@ static void AudioPingThreadProc(void* context) {
             pingCount++;
             AudioPingPayload.sequenceNumber = BE32(1);
 
-            Limelog("Sent Ping: Seq: %d", pingCount);
+            // Logged sparsely -- at a 500 ms interval this is one line a
+            // minute. The previous per-ping line was affordable only because
+            // the thread stopped after the first received packet; now that it
+            // runs for the whole session it would add thousands of lines to
+            // every uploaded log.
+            if (pingCount == 1 || (pingCount % 120) == 0) {
+                Limelog("Audio keepalive: %d pings sent\n", pingCount);
+            }
             sendto(rtpSocket, (char*)&AudioPingPayload, sizeof(AudioPingPayload), 0, (struct sockaddr*)&saddr, AddrLen);
         }
         else {
             sendto(rtpSocket, legacyPingData, sizeof(legacyPingData), 0, (struct sockaddr*)&saddr, AddrLen);
         }
 
-        if(receivedDataFromPeer) return;
+        // NB: This deliberately keeps pinging for the life of the session.
+        // These datagrams are the only outbound traffic on this socket -- audio
+        // is inbound-only once the stream is up -- so they are what holds the
+        // NAT/firewall UDP mapping open. Returning here after the first received
+        // packet left the mapping to expire on its own, which on paths with a
+        // short UDP idle timeout silently blackholed the inbound stream.
+        // destroyAudioStream() interrupts and joins this thread, so running for
+        // the whole session does not leak it.
         PltSleepMsInterruptible(&udpPingThread, 500);
     }
 }
