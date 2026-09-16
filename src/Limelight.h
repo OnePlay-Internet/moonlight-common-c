@@ -692,6 +692,12 @@ typedef struct _LI_VIDEO_NETWORK_STATS {
     uint32_t framesLost;              // frames FEC could not repair
     uint32_t idrRequestsSent;         // full keyframe requests
     uint32_t rfiRequestsSent;         // reference frame invalidation requests
+    // Parity shards the host put on the wire, for every block. Unlike
+    // totalParityPackets / receivedParityPackets above -- which only count
+    // blocks that actually waited on parity, so they read ~0 on a healthy
+    // link -- this is the FEC overhead as bandwidth: video bytes on the wire
+    // ~= payload * (totalDataPackets + sentParityPackets) / totalDataPackets.
+    uint32_t sentParityPackets;
 } LI_VIDEO_NETWORK_STATS, *PLI_VIDEO_NETWORK_STATS;
 
 // Fills in the counters above. Safe to call at any time from any thread; the
