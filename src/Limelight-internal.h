@@ -41,6 +41,7 @@ extern uint32_t VideoStatTotalDataPackets;
 extern uint32_t VideoStatTotalParityPackets;
 extern uint32_t VideoStatReceivedDataPackets;
 extern uint32_t VideoStatReceivedParityPackets;
+extern uint32_t VideoStatSentParityPackets;
 extern uint32_t VideoStatFramesRecovered;
 extern uint32_t VideoStatFramesLost;
 extern uint32_t VideoStatIdrRequests;

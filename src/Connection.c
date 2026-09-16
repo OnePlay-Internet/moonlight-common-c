@@ -21,6 +21,7 @@ uint32_t VideoStatTotalDataPackets;
 uint32_t VideoStatTotalParityPackets;
 uint32_t VideoStatReceivedDataPackets;
 uint32_t VideoStatReceivedParityPackets;
+uint32_t VideoStatSentParityPackets;
 uint32_t VideoStatFramesRecovered;
 uint32_t VideoStatFramesLost;
 uint32_t VideoStatIdrRequests;
@@ -35,6 +36,7 @@ void LiGetVideoNetworkStats(PLI_VIDEO_NETWORK_STATS stats) {
     stats->totalParityPackets = VideoStatTotalParityPackets;
     stats->receivedDataPackets = VideoStatReceivedDataPackets;
     stats->receivedParityPackets = VideoStatReceivedParityPackets;
+    stats->sentParityPackets = VideoStatSentParityPackets;
     stats->framesRecovered = VideoStatFramesRecovered;
     stats->framesLost = VideoStatFramesLost;
     stats->idrRequestsSent = VideoStatIdrRequests;
@@ -328,6 +330,7 @@ int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION stre
     VideoStatTotalParityPackets = 0;
     VideoStatReceivedDataPackets = 0;
     VideoStatReceivedParityPackets = 0;
+    VideoStatSentParityPackets = 0;
     VideoStatFramesRecovered = 0;
     VideoStatFramesLost = 0;
     VideoStatIdrRequests = 0;

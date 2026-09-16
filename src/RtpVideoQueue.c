@@ -112,6 +112,11 @@ static void accumulateFecBlockStats(PRTP_VIDEO_QUEUE queue, bool waitedForParity
     VideoStatTotalDataPackets += queue->bufferDataPackets;
     VideoStatReceivedDataPackets += queue->receivedDataPackets;
 
+    // What the host transmitted for this block, whether or not we needed it.
+    // This is the bandwidth-side view of FEC; the recovery-side counters
+    // below deliberately skip blocks that never waited on parity.
+    VideoStatSentParityPackets += queue->bufferParityPackets;
+
     // Parity is only counted for blocks that actually waited on it. A block
     // whose data all arrived is finalized the moment the last data shard lands
     // (see the early return in reconstructFrame), which is before the parity
