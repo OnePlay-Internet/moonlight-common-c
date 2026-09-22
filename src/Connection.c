@@ -27,6 +27,17 @@ uint32_t VideoStatFramesLost;
 uint32_t VideoStatIdrRequests;
 uint32_t VideoStatRfiRequests;
 
+uint32_t LiGetNegotiatedEncryptionFlags(void) {
+    uint32_t flags = ENCFLG_NONE;
+    if (EncryptionFeaturesEnabled & SS_ENC_VIDEO) {
+        flags |= ENCFLG_VIDEO;
+    }
+    if (EncryptionFeaturesEnabled & SS_ENC_AUDIO) {
+        flags |= ENCFLG_AUDIO;
+    }
+    return flags;
+}
+
 void LiGetVideoNetworkStats(PLI_VIDEO_NETWORK_STATS stats) {
     if (stats == NULL) {
         return;

@@ -704,6 +704,12 @@ typedef struct _LI_VIDEO_NETWORK_STATS {
 // values are a consistent-enough snapshot for reporting, not for control.
 void LiGetVideoNetworkStats(PLI_VIDEO_NETWORK_STATS stats);
 
+// Encryption actually negotiated for this connection, as ENCFLG_* bits -- the
+// intersection of what encryptionFlags asked for and what the host supports.
+// Distinct from STREAM_CONFIGURATION.encryptionFlags, which is only the
+// request. Valid once the RTSP handshake has completed; 0 before that.
+uint32_t LiGetNegotiatedEncryptionFlags(void);
+
 // This function queues a relative mouse move event to be sent to the remote server.
 int LiSendMouseMoveEvent(short deltaX, short deltaY);
 
