@@ -446,6 +446,7 @@ void connectionDetectedFrameLoss(uint32_t startFrame, uint32_t endFrame) {
 void connectionReceivedCompleteFrame(uint32_t frameIndex) {
     lastGoodFrame = frameIndex;
     intervalGoodFrameCount++;
+    VideoStatFramesDelivered++;
 }
 
 void connectionSendFrameFecStatus(PSS_FRAME_FEC_STATUS fecStatus) {
@@ -1336,6 +1337,9 @@ static void controlReceiveThreadFunc(void* context) {
             if (needsAsyncCallback(ctlHdr->type)) {
                 queueAsyncCallback(ctlHdr, packetLength);
             }
+            else if (ctlHdr->type == SS_ABR_STATUS_PTYPE && AbrNegotiated) {
+                abrHandleHostStatus((const char*)(ctlHdr + 1), packetLength - (int)sizeof(*ctlHdr));
+            }
             else if (ctlHdr->type == packetTypes[IDX_TERMINATION]) {
                 BYTE_BUFFER bb;
 
@@ -1430,12 +1434,17 @@ static void lossStatsThreadFunc(void* context) {
 
     if (usePeriodicPing) {
         char periodicPingPayload[8];
+        char abrReport[ABR_REPORT_SIZE];
+        uint64_t lastPingMs = 0;
 
         BbInitializeWrappedBuffer(&byteBuffer, periodicPingPayload, 0, sizeof(periodicPingPayload), BYTE_ORDER_LITTLE);
         BbPut16(&byteBuffer, 4); // Length of payload
         BbPut32(&byteBuffer, 0); // Timestamp?
 
         while (!PltIsThreadInterrupted(&lossStatsThread)) {
+            uint64_t nowMs = PltGetMillis();
+            int abrReportSize;
+
             // For Sunshine servers, send the more detailed per-frame FEC messages
             if (IS_SUNSHINE()) {
                 PQUEUED_FRAME_FEC_STATUS queuedFrameStatus;
@@ -1461,25 +1470,45 @@ static void lossStatsThreadFunc(void* context) {
                 }
             }
 
+            // OnePlay ABR report. Unsequenced like the FEC status: its counters are
+            // cumulative, so one that is lost is covered by the next.
+            abrReportSize = abrBuildReport(abrReport, sizeof(abrReport), nowMs);
+            if (abrReportSize > 0) {
+                if (!sendMessageEnet(SS_ABR_REPORT_PTYPE,
+                                     (short)abrReportSize,
+                                     abrReport,
+                                     CTRL_CHANNEL_GENERIC,
+                                     ENET_PACKET_FLAG_UNSEQUENCED,
+                                     false)) {
+                    Limelog("Loss Stats: Sending ABR report failed: %d\n", (int)LastSocketError());
+                    ListenerCallbacks.connectionTerminated(LastSocketFail());
+                    return;
+                }
+            }
+
             // Send the message (and don't expect a response)
             //
             // NB: We send this periodic message as reliable to ensure the RTT is recomputed
             // regularly. This only happens when an ACK is received to a reliable packet.
             // Since the other traffic on this channel is unsequenced, it doesn't really
             // cause any negative HOL blocking side-effects.
-            if (!sendMessageAndForget(0x0200,
-                                      sizeof(periodicPingPayload),
-                                      periodicPingPayload,
-                                      CTRL_CHANNEL_GENERIC,
-                                      ENET_PACKET_FLAG_RELIABLE,
-                                      false)) {
-                Limelog("Loss Stats: Transaction failed: %d\n", (int)LastSocketError());
-                ListenerCallbacks.connectionTerminated(LastSocketFail());
-                return;
+            if (nowMs - lastPingMs >= PERIODIC_PING_INTERVAL_MS) {
+                lastPingMs = nowMs;
+                if (!sendMessageAndForget(0x0200,
+                                          sizeof(periodicPingPayload),
+                                          periodicPingPayload,
+                                          CTRL_CHANNEL_GENERIC,
+                                          ENET_PACKET_FLAG_RELIABLE,
+                                          false)) {
+                    Limelog("Loss Stats: Transaction failed: %d\n", (int)LastSocketError());
+                    ListenerCallbacks.connectionTerminated(LastSocketFail());
+                    return;
+                }
             }
 
-            // Wait a bit
-            PltSleepMsInterruptible(&lossStatsThread, PERIODIC_PING_INTERVAL_MS);
+            // Wait a bit. With adaptive bitrate on, wake often enough that the reports keep
+            // the host's 250 ms decision windows covered; the ping keeps its own interval.
+            PltSleepMsInterruptible(&lossStatsThread, AbrNegotiated ? PERIODIC_PING_INTERVAL_MS / 2 : PERIODIC_PING_INTERVAL_MS);
         }
     }
     else {

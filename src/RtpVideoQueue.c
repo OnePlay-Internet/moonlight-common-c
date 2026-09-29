@@ -757,6 +757,13 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
         connectionSawFrame(queue->currentFrameNumber);
         
         queue->bufferFirstRecvTimeMs = PltGetMillis();
+
+        // The first packet of a frame: how long it spent queued on the way, for the host's
+        // adaptive bitrate controller.
+        if (fecCurrentBlockNumber == 0) {
+            abrOnFrameStart(packet->timestamp, queue->bufferFirstRecvTimeMs);
+        }
+
         queue->bufferLowestSequenceNumber = U16(packet->sequenceNumber - fecIndex);
         queue->nextContiguousSequenceNumber = queue->bufferLowestSequenceNumber;
         queue->receivedDataPackets = 0;

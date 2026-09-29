@@ -710,6 +710,52 @@ void LiGetVideoNetworkStats(PLI_VIDEO_NETWORK_STATS stats);
 // request. Valid once the RTSP handshake has completed; 0 before that.
 uint32_t LiGetNegotiatedEncryptionFlags(void);
 
+// OnePlay adaptive bitrate.
+//
+// The host lowers the encoder bitrate when the link cannot carry it and raises it again
+// when it recovers; the client reports what it receives (every ~250 ms) so the host can
+// tell congestion from a lossy medium early, before frames are lost. Only hosts that
+// advertise support are asked, so this is safe to leave on against any host.
+//
+// Call before LiStartConnection(). minBitrateKbps is the lowest rate this client wants
+// the host to go to; 0 leaves it to the host.
+void LiSetAdaptiveBitrate(bool enabled, int minBitrateKbps);
+
+// True once the RTSP handshake has agreed adaptive bitrate with the host.
+bool LiIsAdaptiveBitrateNegotiated(void);
+
+// What the host's controller is doing, as last reported by the host (on every change
+// and at least once a second).
+typedef struct _LI_ABR_STATUS {
+    uint8_t state;           // LiGetAbrStateName()
+    uint8_t reason;          // LiGetAbrReasonName(): why the bitrate last moved
+    uint8_t encoderControl;  // 0 unknown, 1 changed in place, 2 encoder recreated, 3 fixed
+    uint32_t targetKbps;     // encoder bitrate now
+    uint32_t ceilingKbps;    // the negotiated bitrate, never exceeded
+    uint32_t floorKbps;
+    uint32_t budgetKbps;     // video + FEC send budget
+    uint16_t fecPercent;
+    uint16_t rttMs;          // host-side round trip
+    uint16_t queueDelayMs;   // queueing delay the host is acting on
+    uint16_t lossBasisPoints; // smoothed pre-FEC loss in 0.01% units
+    uint32_t decreases;
+    uint32_t increases;
+    uint32_t sequence;
+    uint64_t receivedAtMs;   // PltGetMillis() when it arrived
+} LI_ABR_STATUS, *PLI_ABR_STATUS;
+
+// Returns false (and zeroes status) until the host has sent one.
+bool LiGetAbrStatus(PLI_ABR_STATUS status);
+const char* LiGetAbrStateName(uint8_t state);
+const char* LiGetAbrReasonName(uint8_t reason);
+
+// Decoder health for the host's controller: a decoder that cannot keep up is helped by a
+// lower bitrate. Call as often as convenient (per frame is fine) from any thread.
+//   queueDepth          frames received but not yet decoded
+//   decodeTimeUs        how long the last frame took to decode
+//   droppedFramesTotal  frames received but never shown, cumulative
+void LiReportDecoderStats(uint32_t queueDepth, uint32_t decodeTimeUs, uint32_t droppedFramesTotal);
+
 // This function queues a relative mouse move event to be sent to the remote server.
 int LiSendMouseMoveEvent(short deltaX, short deltaY);
 

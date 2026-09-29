@@ -346,6 +346,8 @@ int LiStartConnection(PSERVER_INFORMATION serverInfo, PSTREAM_CONFIGURATION stre
     VideoStatFramesLost = 0;
     VideoStatIdrRequests = 0;
     VideoStatRfiRequests = 0;
+    AbrNegotiated = false;
+    abrInitialize();
     AudioPortNumber = 0;
 
 #ifdef DYNAMIC_PORTS

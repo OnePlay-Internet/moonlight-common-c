@@ -269,6 +269,15 @@ static PSDP_OPTION getAttributesList(char*urlSafeAddr) {
     if (IS_SUNSHINE()) {
         // Send client feature flags to Sunshine hosts
         uint32_t moonlightFeatureFlags = ML_FF_FEC_STATUS | ML_FF_SESSION_ID_V1;
+
+        // OnePlay adaptive bitrate, when the application wants it and the host offers it.
+        {
+            int abrMinKbps;
+            AbrNegotiated = abrWantedForConnection(&abrMinKbps) && (SunshineFeatureFlags & SS_FF_ONEPLAY_ABR);
+            if (AbrNegotiated) {
+                moonlightFeatureFlags |= ML_FF_ONEPLAY_ABR;
+            }
+        }
         snprintf(payloadStr, sizeof(payloadStr), "%u", moonlightFeatureFlags);
         err |= addAttributeString(&optionHead, "x-ml-general.featureFlags", payloadStr);
 
@@ -369,6 +378,17 @@ static PSDP_OPTION getAttributesList(char*urlSafeAddr) {
         if (IS_SUNSHINE()) {
             snprintf(payloadStr, sizeof(payloadStr), "%u", StreamConfig.bitrate);
             err |= addAttributeString(&optionHead, "x-ml-video.configuredBitrateKbps", payloadStr);
+
+            // The bitrate above becomes the ceiling the host adapts under.
+            if (AbrNegotiated) {
+                int abrMinKbps;
+                abrWantedForConnection(&abrMinKbps);
+                err |= addAttributeString(&optionHead, "x-ml-video.adaptiveBitrate", "1");
+                if (abrMinKbps > 0) {
+                    snprintf(payloadStr, sizeof(payloadStr), "%d", abrMinKbps);
+                    err |= addAttributeString(&optionHead, "x-ml-video.abrMinBitrateKbps", payloadStr);
+                }
+            }
         }
     }
     else {
