@@ -1130,6 +1130,15 @@ void notifyFrameLost(unsigned int frameNumber, bool speculative) {
     // Drop state and determine if we need an IDR frame or if RFI is okay
     dropFrameState();
 
+    // Waiting for an IDR frame, request one with the next complete frame, as a gap in the
+    // frame numbers does. Without this, a loss reported here was never followed by a request
+    // unless the next frame also left a gap: a frame the queue predicted lost that then
+    // completed (a reordered packet) left the stream dropping frames until the consecutive
+    // drop limit, two seconds at 60 fps.
+    if (waitingForIdrFrame) {
+        waitingForNextSuccessfulFrame = true;
+    }
+
     // If dropFrameState() determined that RFI was usable, issue it now
     if (!waitingForIdrFrame) {
         LC_ASSERT(waitingForRefInvalFrame);

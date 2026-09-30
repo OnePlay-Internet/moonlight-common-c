@@ -252,7 +252,11 @@ static int reconstructFrame(PRTP_VIDEO_QUEUE queue) {
         // based on the packets we've received (or not) so far. If the number of missing shards exceeds the total
         // needed shards, there is no hope of recovering the data. The only way we could recover this frame is by
         // receiving OOS data, which is unlikely because we've not seen any recently from this host.
-        if (!queue->reportedLostFrame && !queue->receivedOosData) {
+        //
+        // The prediction only buys a reference frame invalidation one frame sooner. Without
+        // RFI a wrong prediction - the missing shards were only reordered - drops the frame and
+        // waits for a keyframe for nothing, so it is made only when RFI is available.
+        if (!queue->reportedLostFrame && !queue->receivedOosData && isReferenceFrameInvalidationEnabled()) {
             // NB: We use totalPackets - neededPackets instead of just bufferParityPackets here because we require
             // one extra parity shard for recovery if we're in FEC validation mode.
             if (queue->missingPackets > totalPackets - neededPackets) {
