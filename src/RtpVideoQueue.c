@@ -16,6 +16,22 @@
 // RTP packets use a 90 KHz presentation timestamp clock
 #define PTS_DIVISOR 90
 
+// Off by default. Reordering on Wi-Fi and cellular links cost whole frames and multi-second
+// stalls in the benchmark, but nearly all of that was the keyframe request that never went
+// out after a wrongly predicted loss (see notifyFrameLost() and reconstructFrame()). With
+// that fixed, holding a later frame's packets for 20 ms made no measurable difference over
+// reorder, jitter and loss profiles, while delaying every real loss report - so it stays
+// available (the test harness's --reorder-window-ms) rather than on.
+int RtpvReorderWindowMs = 0;
+
+// A window's worth of packets at several hundred Mbps.
+#define RTPV_MAX_HELD_PACKETS 512
+
+// Only a block this close to complete is worth holding for: a reordered packet or two leave
+// it a shard or two short, while a burst loss leaves it many short, and holding for that only
+// delays the loss report - and with it recovery.
+#define RTPV_HOLD_MAX_NEEDED 4
+
 void RtpvInitializeQueue(PRTP_VIDEO_QUEUE queue) {
     reed_solomon_init();
     memset(queue, 0, sizeof(*queue));
@@ -38,6 +54,7 @@ static void purgeListEntries(PRTPV_QUEUE_LIST list) {
 void RtpvCleanupQueue(PRTP_VIDEO_QUEUE queue) {
     purgeListEntries(&queue->pendingFecBlockList);
     purgeListEntries(&queue->completedFecBlockList);
+    purgeListEntries(&queue->heldPacketList);
 }
 
 static void insertEntryIntoList(PRTPV_QUEUE_LIST list, PRTPV_QUEUE_ENTRY entry) {
@@ -586,7 +603,10 @@ uint32_t RtpvGetCurrentFrameNumber(PRTP_VIDEO_QUEUE queue) {
     return queue->currentFrameNumber;
 }
 
-int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_QUEUE_ENTRY packetEntry) {
+// fresh: a packet just received, whose header fields still need converting (a held one
+// coming back has had them converted). allowHold: it may be held behind the current block.
+static int addPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_QUEUE_ENTRY packetEntry,
+                     uint64_t receiveTimeMs, bool fresh, bool allowHold) {
     if (isBefore16(packet->sequenceNumber, queue->nextContiguousSequenceNumber)) {
         // Reject packets behind our current buffer window
         return RTPF_RET_REJECTED;
@@ -607,9 +627,11 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
 
     PNV_VIDEO_PACKET nvPacket = (PNV_VIDEO_PACKET)(((char*)packet) + dataOffset);
 
-    nvPacket->streamPacketIndex = LE32(nvPacket->streamPacketIndex);
-    nvPacket->frameIndex = LE32(nvPacket->frameIndex);
-    nvPacket->fecInfo = LE32(nvPacket->fecInfo);
+    if (fresh) {
+        nvPacket->streamPacketIndex = LE32(nvPacket->streamPacketIndex);
+        nvPacket->frameIndex = LE32(nvPacket->frameIndex);
+        nvPacket->fecInfo = LE32(nvPacket->fecInfo);
+    }
 
     // For legacy servers, we'll fixup the reserved data so that it looks like
     // it's a single FEC frame from a multi-FEC capable server. This allows us
@@ -638,6 +660,25 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
     // if we can't finish a frame before receiving the next one.
     if (queue->pendingFecBlockList.count == 0 || queue->currentFrameNumber != nvPacket->frameIndex ||
             queue->multiFecCurrentBlockNumber != fecCurrentBlockNumber) {
+        // A later frame or FEC block while the current block could still complete: its
+        // missing packets may only have been reordered or delayed. Hold this packet, and
+        // everything after it, for up to RtpvReorderWindowMs before giving the block up.
+        if (allowHold && queue->pendingFecBlockList.count != 0 && RtpvReorderWindowMs > 0 &&
+                queue->bufferDataPackets - queue->pendingFecBlockList.count <= RTPV_HOLD_MAX_NEEDED &&
+                queue->heldPacketList.count < RTPV_MAX_HELD_PACKETS &&
+                (queue->heldPacketList.count == 0 || receiveTimeMs - queue->heldSinceMs < (uint64_t)RtpvReorderWindowMs)) {
+            if (queue->heldPacketList.count == 0) {
+                queue->heldSinceMs = receiveTimeMs;
+            }
+            packetEntry->packet = packet;
+            packetEntry->length = length;
+            packetEntry->receiveTimeMs = receiveTimeMs;
+            packetEntry->prev = NULL;
+            packetEntry->next = NULL;
+            insertEntryIntoList(&queue->heldPacketList, packetEntry);
+            return RTPF_RET_QUEUED;
+        }
+
         // Both loss paths below can run for the same abandoned frame in a single
         // call: a single-block frame does not return from the first, and falls
         // into the second. Counting the frame lost in both inflated
@@ -760,7 +801,8 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
         // being able to reconstruct a full frame from it.
         connectionSawFrame(queue->currentFrameNumber);
         
-        queue->bufferFirstRecvTimeMs = PltGetMillis();
+        // When the frame's first packet arrived, not when a hold let it through.
+        queue->bufferFirstRecvTimeMs = receiveTimeMs;
 
         // The first packet of a frame: how long it spent queued on the way, for the host's
         // adaptive bitrate controller.
@@ -883,5 +925,53 @@ int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_
 
         return RTPF_RET_QUEUED;
     }
+}
+
+// Feeds held packets back, oldest first, once the block they waited behind has completed or
+// its time is up. giveUp gives the current block up if it is still incomplete. A packet held
+// again during the replay keeps everything after it held too, in order.
+static void replayHeldPackets(PRTP_VIDEO_QUEUE queue, bool giveUp) {
+    PRTPV_QUEUE_ENTRY entry = queue->heldPacketList.head;
+    bool allowHold = !giveUp;
+
+    queue->heldPacketList.head = NULL;
+    queue->heldPacketList.tail = NULL;
+    queue->heldPacketList.count = 0;
+
+    while (entry != NULL) {
+        PRTPV_QUEUE_ENTRY next = entry->next;
+        entry->prev = NULL;
+        entry->next = NULL;
+
+        if (queue->heldPacketList.count != 0) {
+            insertEntryIntoList(&queue->heldPacketList, entry);
+        }
+        else if (addPacket(queue, entry->packet, entry->length, entry, entry->receiveTimeMs, false, allowHold) != RTPF_RET_QUEUED) {
+            // Held packets belong to the queue: one it will not take is freed here.
+            free(entry->packet);
+        }
+
+        allowHold = true;
+        entry = next;
+    }
+}
+
+int RtpvAddPacket(PRTP_VIDEO_QUEUE queue, PRTP_PACKET packet, int length, PRTPV_QUEUE_ENTRY packetEntry) {
+    uint64_t now = PltGetMillis();
+    int ret;
+
+    // Out of time for the block the held packets were waiting on.
+    if (queue->heldPacketList.count != 0 && now - queue->heldSinceMs >= (uint64_t)RtpvReorderWindowMs) {
+        replayHeldPackets(queue, true);
+    }
+
+    ret = addPacket(queue, packet, length, packetEntry, now, true, true);
+
+    // The block completed: what was held behind it can go through.
+    if (queue->heldPacketList.count != 0 && queue->pendingFecBlockList.count == 0) {
+        replayHeldPackets(queue, false);
+    }
+
+    return ret;
 }
 
