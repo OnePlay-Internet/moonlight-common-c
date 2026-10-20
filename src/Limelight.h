@@ -592,6 +592,11 @@ typedef void(*ConnListenerOpenUrl)(const char* url);
 // session with your backend, and go to the post-session screen. Treat it as a normal
 // exit, not a failure - no error dialog, no reconnect - and make it idempotent: it may
 // arrive while you are already leaving.
+//
+// NEVER call LiStopConnection() from inside this callback. It runs on the control stream's
+// callback thread, and LiStopConnection() waits for that very thread to finish: called
+// from here it waits on itself, forever. Post the work to your own thread (a UI thread or
+// executor) and return at once - as clients already do for openUrl.
 typedef void(*ConnListenerTerminateStream)(const char* reason);
 
 typedef struct _CONNECTION_LISTENER_CALLBACKS {
