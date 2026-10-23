@@ -164,6 +164,9 @@ static void VideoReceiveThreadProc(void* context) {
             continue;
         }
 
+        // Everything that arrived, before any filtering: what the path delivered.
+        VideoStatBytesReceived += (uint64_t)err;
+
         if (!receivedDataFromPeer) {
             receivedDataFromPeer = true;
             Limelog("Received first video packet after %d ms\n", waitingForVideoMs);

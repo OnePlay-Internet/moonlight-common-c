@@ -49,7 +49,16 @@ typedef struct _RTP_VIDEO_QUEUE {
 
     uint32_t lastOosFramePresentationTimestamp;
     bool receivedOosData;
+
+    // Packets of a later frame (or FEC block) that arrived while the current block could
+    // still complete, held for up to RtpvReorderWindowMs from heldSinceMs. See RtpvAddPacket().
+    RTPV_QUEUE_LIST heldPacketList;
+    uint64_t heldSinceMs;
 } RTP_VIDEO_QUEUE, *PRTP_VIDEO_QUEUE;
+
+// How long the queue holds a later frame's packets before giving up an incomplete block,
+// in milliseconds. 0 gives it up at once, as before.
+extern int RtpvReorderWindowMs;
 
 #define RTPF_RET_QUEUED    0
 #define RTPF_RET_REJECTED  1

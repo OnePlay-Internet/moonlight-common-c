@@ -46,6 +46,9 @@ extern uint32_t VideoStatFramesRecovered;
 extern uint32_t VideoStatFramesLost;
 extern uint32_t VideoStatIdrRequests;
 extern uint32_t VideoStatRfiRequests;
+extern uint32_t VideoStatFramesDelivered;
+extern uint64_t VideoStatBytesReceived;
+extern bool AbrNegotiated;
 extern uint16_t AudioPortNumber;
 extern uint16_t MicPortNumber;
 extern uint16_t VideoPortNumber;
@@ -113,6 +116,21 @@ extern uint32_t SunshineFeatureFlags;
 // Client feature flags for x-ml-general.featureFlags SDP attribute
 #define ML_FF_FEC_STATUS 0x01 // Client sends SS_FRAME_FEC_STATUS for frame losses
 #define ML_FF_SESSION_ID_V1 0x02 // Client supports X-SS-Ping-Payload and X-SS-Connect-Data
+
+// OnePlay adaptive bitrate. Must match the host's src/abr_protocol.h.
+#define SS_FF_ONEPLAY_ABR 0x01000000 // Host adapts bitrate on request (x-ss-general.featureFlags)
+#define ML_FF_ONEPLAY_ABR 0x01000000 // Client sends ABR reports, accepts ABR status
+#define SS_ABR_REPORT_PTYPE 0x55A0
+#define SS_ABR_STATUS_PTYPE 0x55A1
+#define ABR_REPORT_SIZE 72
+#define ABR_STATUS_SIZE 40
+#define ABR_REPORT_INTERVAL_MS 250
+
+bool abrWantedForConnection(int* minBitrateKbps);
+void abrInitialize(void);
+void abrOnFrameStart(uint32_t rtpTimestamp, uint64_t receiveTimeMs);
+int abrBuildReport(char* buffer, int bufferSize, uint64_t nowMs);
+void abrHandleHostStatus(const char* payload, int length);
 
 #define UDP_RECV_POLL_TIMEOUT_MS 100
 
