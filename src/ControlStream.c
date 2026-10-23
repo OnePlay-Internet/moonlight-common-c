@@ -105,6 +105,7 @@ static uint32_t lastSeenFrame;
 static bool stopping;
 static bool disconnectPending;
 static bool encryptedControlStream;
+static uint16_t micDataSequence;
 static bool hdrEnabled;
 static SS_HDR_METADATA hdrMetadata;
 
@@ -330,6 +331,7 @@ static bool supportsIdrFrameRequest;
 // Initializes the control stream
 int initializeControlStream(void) {
     stopping = false;
+    micDataSequence = 0;
     PltCreateEvent(&idrFrameRequiredEvent);
     LbqInitializeLinkedBlockingQueue(&invalidReferenceFrameTuples, 20);
     LbqInitializeLinkedBlockingQueue(&frameFecStatusQueue, 8); // Limits number of frame status reports per periodic ping interval
@@ -711,7 +713,9 @@ static bool sendMessageEnet(short ptype, short paylen, const void* payload, uint
     if (encryptedControlStream) {
         PNVCTL_ENCRYPTED_PACKET_HEADER encPacket;
         PNVCTL_ENET_PACKET_HEADER_V2 packet;
-        char tempBuffer[256];
+        // Big enough for a microphone frame (MIC_DATA_HEADER_SIZE + MIC_DATA_MAX_OPUS_BYTES).
+        // It was 256, guarded only by an assert that release builds compile out.
+        char tempBuffer[1024];
 
         enetPacket = enet_packet_create(NULL,
                                         sizeof(*encPacket) + AES_GCM_TAG_LENGTH + sizeof(*packet) + paylen,
@@ -733,8 +737,15 @@ static bool sendMessageEnet(short ptype, short paylen, const void* payload, uint
         {
             Limelog("Encrypted -> len:: %d | SeqNumber :: %d", encPacket->length, encPacket->seq );
         }
-        // Construct the plaintext data for encryption
+        // Construct the plaintext data for encryption. Checked at run time, not just asserted:
+        // a message that doesn't fit is refused rather than written past the buffer.
         LC_ASSERT(sizeof(*packet) + paylen < sizeof(tempBuffer));
+        if (paylen < 0 || sizeof(*packet) + (size_t)paylen >= sizeof(tempBuffer)) {
+            Limelog("Control stream message too large to encrypt: %d bytes\n", (int)paylen);
+            enet_packet_destroy(enetPacket);
+            PltUnlockMutex(&enetMutex);
+            return false;
+        }
         packet = (PNVCTL_ENET_PACKET_HEADER_V2)tempBuffer;
         packet->type = ptype;
         packet->payloadLength = paylen;
@@ -1798,6 +1809,46 @@ int sendMicStatusPacketOnControlStream(unsigned char* data, int length){
     Limelog("len of the mic send %d", length);
     if(sendMessageAndForget(packetTypes[IDX_TOGGLE_MIC], length, data, CTRL_CHANNEL_UTF8, ENET_PACKET_FLAG_RELIABLE, false) == 0)
     {
+        return -1;
+    }
+
+    return 0;
+}
+
+// Whether the microphone goes on the encrypted control stream rather than to the audio
+// port. Only when the host says it takes it there (SS_FF_ONEPLAY_MIC) and this control
+// stream is encrypted: otherwise the voice would be no better protected, and an older
+// host would not know the message.
+bool micUsesControlStream(void) {
+    return IS_SUNSHINE() && encryptedControlStream &&
+           (SunshineFeatureFlags & SS_FF_ONEPLAY_MIC) != 0;
+}
+
+// Sends one encoded microphone frame (SS_MIC_DATA_PTYPE). Called by the capture thread only.
+// Returns -1 if the frame was not sent; the caller drops it, and the next follows in 10 ms.
+int sendMicDataOnControlStream(const unsigned char* data, int length) {
+    unsigned char payload[MIC_DATA_HEADER_SIZE + MIC_DATA_MAX_OPUS_BYTES];
+
+    if (data == NULL || length <= 0 || length > MIC_DATA_MAX_OPUS_BYTES) {
+        return -1;
+    }
+
+    payload[0] = MIC_DATA_VERSION;
+    payload[1] = 0;  // flags, none defined
+    payload[2] = (unsigned char)(micDataSequence & 0xFF);
+    payload[3] = (unsigned char)(micDataSequence >> 8);
+    micDataSequence++;
+    memcpy(&payload[MIC_DATA_HEADER_SIZE], data, length);
+
+    // Unsequenced, like the FEC status and ABR reports: never retransmitted (a late frame is
+    // worse than a missing one) and never held behind reliable messages such as input. The
+    // host drops repeats and late arrivals by the sequence number.
+    if (!sendMessageAndForget(SS_MIC_DATA_PTYPE,
+                              (short)(MIC_DATA_HEADER_SIZE + length),
+                              payload,
+                              CTRL_CHANNEL_GENERIC,
+                              ENET_PACKET_FLAG_UNSEQUENCED,
+                              false)) {
         return -1;
     }
 

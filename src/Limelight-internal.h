@@ -126,6 +126,15 @@ extern uint32_t SunshineFeatureFlags;
 #define ABR_STATUS_SIZE 40
 #define ABR_REPORT_INTERVAL_MS 250
 
+// OnePlay microphone on the encrypted control stream. Must match the host's src/stream.h.
+// The message is MIC_DATA_HEADER_SIZE bytes - version (MIC_DATA_VERSION), flags (0) and a
+// 16-bit little-endian sequence number - followed by one Opus packet.
+#define SS_FF_ONEPLAY_MIC 0x02000000 // Host takes the mic as SS_MIC_DATA_PTYPE (x-ss-general.featureFlags)
+#define SS_MIC_DATA_PTYPE 0x5507
+#define MIC_DATA_VERSION 1
+#define MIC_DATA_HEADER_SIZE 4
+#define MIC_DATA_MAX_OPUS_BYTES 1000 // 10 ms of Opus at its 510 kbps maximum is under 640
+
 bool abrWantedForConnection(int* minBitrateKbps);
 void abrInitialize(void);
 void abrOnFrameStart(uint32_t rtpTimestamp, uint64_t receiveTimeMs);
@@ -168,6 +177,8 @@ void connectionSawFrame(uint32_t frameIndex);
 void connectionSendFrameFecStatus(PSS_FRAME_FEC_STATUS fecStatus);
 int sendInputPacketOnControlStream(unsigned char* data, int length, uint8_t channelId, uint32_t flags, bool moreData);
 int sendMicStatusPacketOnControlStream(unsigned char* data, int lenght);
+bool micUsesControlStream(void);
+int sendMicDataOnControlStream(const unsigned char* data, int length);
 void flushInputOnControlStream(void);
 bool isControlDataInTransit(void);
 
