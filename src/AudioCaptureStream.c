@@ -56,6 +56,12 @@ void audioCaptureThreadProc(void *context)
     }
     PltUnlockMutex(&isMicToggled_MTX);
 
+    // On the encrypted control stream when the host takes it there (SS_FF_ONEPLAY_MIC),
+    // otherwise raw Opus to the audio port as before - older hosts only know that.
+    bool useControlStream = micUsesControlStream();
+    Limelog("Microphone: sending %s\n",
+            useControlStream ? "on the encrypted control stream" : "to the audio port, unencrypted");
+
     while (!PltIsThreadInterrupted(&captureThread))
     {
         PltLockMutex(&isMicToggled_MTX);
@@ -82,7 +88,13 @@ void audioCaptureThreadProc(void *context)
         }
 
         if(rtpSocket == 0) break;
-        sendto(rtpSocket, (char *)&outFrame, encoded_len, 0, (struct sockaddr *)&saddr, AddrLen);
+        if (useControlStream) {
+            // A frame that can't be sent is dropped; the next one follows in 10 ms.
+            sendMicDataOnControlStream(outFrame, encoded_len);
+        }
+        else {
+            sendto(rtpSocket, (char *)&outFrame, encoded_len, 0, (struct sockaddr *)&saddr, AddrLen);
+        }
     }
 }
 
