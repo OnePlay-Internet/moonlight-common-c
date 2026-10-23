@@ -81,6 +81,8 @@ typedef struct _QUEUED_ASYNC_CALLBACK {
             char* url;
         } openUrl;
         struct {
+            // Owned by this entry and freed with it, like the URL. Never NULL once queued:
+            // a message with no reason carries an empty string.
             char* reason;
         } terminateStream;
     } data;
@@ -1024,6 +1026,8 @@ static void asyncCallbackThreadFunc(void* context) {
             break;
 
         case IDX_TERMINATE_STREAM:
+            // Passed on as many times as it arrives. The host already collapses repeats,
+            // and ending a session is the client's to make idempotent: it owns the session.
             ListenerCallbacks.terminateStream(queuedCb->data.terminateStream.reason);
             free(queuedCb->data.terminateStream.reason);
             break;
@@ -1145,7 +1149,9 @@ static void queueAsyncCallback(PNVCTL_ENET_PACKET_HEADER_V1 ctlHdr, int packetLe
 
         BbGet16(&bb, &reasonLength);
 
-        // Trust the length only as far as the bytes we were actually handed.
+        // Same framing as the URL, with one difference: a length of zero is valid and means
+        // the game gave no reason. The session must end all the same. Trust the length only
+        // as far as the bytes we were actually handed; the host cuts reasons to 256 bytes.
         int available = packetLength - (int)sizeof(*ctlHdr) - (int)sizeof(reasonLength);
         if (available < 0 || reasonLength > available || reasonLength > 256) {
             Limelog("Discarding malformed terminate stream message\n");

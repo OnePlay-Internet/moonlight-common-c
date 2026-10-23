@@ -580,8 +580,23 @@ typedef void(*ConnListenerSetVirtualKeyboard)(uint8_t visible, uint8_t inputHint
 // possibly type credentials into, must show them the address bar their browser gives it.
 typedef void(*ConnListenerOpenUrl)(const char* url);
 
-// This callback is invoked when the game calls the OnePlay Gaming SDK's
-// TerminateStream(reason) when the player quits.
+// This callback is invoked when the host asks the client to end the session, on behalf of
+// a game the player has quit (the OnePlay Gaming SDK's TerminateStream(reason)) - so they
+// are taken out of the stream rather than left looking at a desktop.
+//
+// reason is NUL-terminated, valid only for the duration of the call, and may be empty. If
+// it is not, it is a short message from the game ("Thanks for playing") the client may
+// show. Copy it if you need to keep it.
+//
+// Do what the client's own "quit" does: stop the stream with LiStopConnection(), end the
+// session with your backend, and go to the post-session screen. Treat it as a normal
+// exit, not a failure - no error dialog, no reconnect - and make it idempotent: it may
+// arrive while you are already leaving.
+//
+// NEVER call LiStopConnection() from inside this callback. It runs on the control stream's
+// callback thread, and LiStopConnection() waits for that very thread to finish: called
+// from here it waits on itself, forever. Post the work to your own thread (a UI thread or
+// executor) and return at once - as clients already do for openUrl.
 typedef void(*ConnListenerTerminateStream)(const char* reason);
 
 typedef struct _CONNECTION_LISTENER_CALLBACKS {
