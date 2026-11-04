@@ -135,6 +135,13 @@ extern uint32_t SunshineFeatureFlags;
 #define MIC_DATA_HEADER_SIZE 4
 #define MIC_DATA_MAX_OPUS_BYTES 1000 // 10 ms of Opus at its 510 kbps maximum is under 640
 
+// OnePlay on-screen keyboard state, client to host. Must match the host's src/stream.h.
+// Two bytes: version (KEYBOARD_STATE_VERSION) and visible (0 or 1).
+#define SS_FF_ONEPLAY_KEYBOARD_STATE 0x04000000 // Host takes SS_KEYBOARD_STATE_PTYPE (x-ss-general.featureFlags)
+#define SS_KEYBOARD_STATE_PTYPE 0x5508
+#define KEYBOARD_STATE_VERSION 1
+#define KEYBOARD_STATE_SIZE 2
+
 bool abrWantedForConnection(int* minBitrateKbps);
 void abrInitialize(void);
 void abrOnFrameStart(uint32_t rtpTimestamp, uint64_t receiveTimeMs);
