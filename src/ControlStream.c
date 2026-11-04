@@ -1878,6 +1878,31 @@ bool isControlDataInTransit(void) {
     return ret;
 }
 
+int LiSendVirtualKeyboardState(bool visible) {
+    unsigned char payload[KEYBOARD_STATE_SIZE];
+
+    // Only to a host that said it takes the message: an older one would log every one of
+    // them as an unknown packet.
+    if (!IS_SUNSHINE() || (SunshineFeatureFlags & SS_FF_ONEPLAY_KEYBOARD_STATE) == 0) {
+        return LI_ERR_UNSUPPORTED;
+    }
+
+    payload[0] = KEYBOARD_STATE_VERSION;
+    payload[1] = visible ? 1 : 0;
+
+    // Reliable: a lost "hidden" would leave the game waiting on a keyboard nobody can see.
+    if (!sendMessageAndForget(SS_KEYBOARD_STATE_PTYPE,
+                              KEYBOARD_STATE_SIZE,
+                              payload,
+                              CTRL_CHANNEL_GENERIC,
+                              ENET_PACKET_FLAG_RELIABLE,
+                              false)) {
+        return -1;
+    }
+
+    return 0;
+}
+
 bool LiShowMouseCursor(bool show){
     char *data = show ? "Relative" : "Absolute";
 

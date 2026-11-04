@@ -1049,6 +1049,17 @@ int LiSendHighResHScrollEvent(short scrollAmount);
 
 int LiSendMicToggleEvent(bool isMuted);
 
+// Tells the host the on-screen keyboard changed on this device. Call it with false
+// whenever the keyboard goes away for any reason other than a setVirtualKeyboard(0) from
+// the host - the player pressing back, the keyboard's own hide key, a tap outside it, the
+// app losing focus. Without it the game that opened the keyboard never learns it closed
+// and may keep waiting for text. Calling it with true when the player opens the keyboard
+// themselves is optional. Repeats are harmless.
+//
+// Returns 0 when sent, LI_ERR_UNSUPPORTED if the host is too old to take it (nothing to
+// do then), or -1 if it could not be sent. This is a OnePlay protocol extension.
+int LiSendVirtualKeyboardState(bool visible);
+
 // This function returns a time in milliseconds with an implementation-defined epoch.
 uint64_t LiGetMillis(void);
 
