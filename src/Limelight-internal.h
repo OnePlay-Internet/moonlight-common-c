@@ -170,6 +170,7 @@ int sendInputPacketOnControlStream(unsigned char* data, int length, uint8_t chan
 int sendMicStatusPacketOnControlStream(unsigned char* data, int lenght);
 void flushInputOnControlStream(void);
 bool isControlDataInTransit(void);
+bool isKeyboardDataInTransit(void);
 
 #ifdef DYNAMIC_PORTS
 int performRtspHandshake(PSERVER_INFORMATION serverInfo, PORT_DETAILS ports);
