@@ -59,6 +59,10 @@ static struct {
 #define MOUSE_BATCHING_INTERVAL_MS 1
 #define PEN_BATCHING_INTERVAL_MS 1
 
+// Longest the input thread waits for earlier keyboard events to be acknowledged before it
+// sends UTF-8 text. Everything else queued behind the text waits too, so keep this short.
+#define UTF8_KEYBOARD_WAIT_MAX_MS 500
+
 // Don't batch up/down/cancel events
 #define TOUCH_EVENT_IS_BATCHABLE(x) ((x) == LI_TOUCH_EVENT_HOVER || (x) == LI_TOUCH_EVENT_MOVE)
 
@@ -599,9 +603,23 @@ static void inputSendThreadProc(void* context) {
             // and UTF-8 text events with each other. We need to make sure any previous keyboard events
             // have been processed prior to sending these UTF-8 events to avoid interference between
             // the two (especially with modifier keys).
+            //
+            // Only keyboard events matter here, so wait on the keyboard channel alone and never
+            // for longer than UTF8_KEYBOARD_WAIT_MAX_MS. Waiting on all reliable control data
+            // never finished once the round trip exceeded the 100 ms periodic ping, which left
+            // this thread - and every touch, mouse and key queued behind it - stuck for the rest
+            // of the session.
             flushInputOnControlStream();
-            while (!PltIsThreadInterrupted(&inputSendThread) && isControlDataInTransit()) {
-                PltSleepMs(10);
+            {
+                uint64_t waitStartMs = PltGetMillis();
+                while (!PltIsThreadInterrupted(&inputSendThread) && isKeyboardDataInTransit()) {
+                    if (PltGetMillis() - waitStartMs >= UTF8_KEYBOARD_WAIT_MAX_MS) {
+                        Limelog("UTF-8 text: keyboard events still unacknowledged after %d ms, sending anyway\n",
+                                UTF8_KEYBOARD_WAIT_MAX_MS);
+                        break;
+                    }
+                    PltSleepMs(10);
+                }
             }
 
             // Finally, sleep an additional 50 ms to allow the events to be processed by Windows
