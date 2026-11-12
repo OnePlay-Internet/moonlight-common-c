@@ -1903,6 +1903,22 @@ int LiSendVirtualKeyboardState(bool visible) {
     return 0;
 }
 
+// True while reliable keyboard events have been sent but not yet acknowledged. Unlike
+// isControlDataInTransit(), the periodic ping and every other channel are ignored, so this
+// settles within about one round trip no matter how slow the link is.
+bool isKeyboardDataInTransit(void) {
+    bool ret = false;
+
+    PltLockMutex(&enetMutex);
+    if (peer != NULL && peer->state == ENET_PEER_STATE_CONNECTED &&
+        CTRL_CHANNEL_KEYBOARD < peer->channelCount) {
+        ret = peer->channels[CTRL_CHANNEL_KEYBOARD].usedReliableWindows != 0;
+    }
+    PltUnlockMutex(&enetMutex);
+
+    return ret;
+}
+
 bool LiShowMouseCursor(bool show){
     char *data = show ? "Relative" : "Absolute";
 
