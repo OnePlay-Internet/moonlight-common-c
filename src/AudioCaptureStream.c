@@ -50,8 +50,10 @@ void audioCaptureThreadProc(void *context)
     memcpy(&saddr, &RemoteAddr, sizeof(saddr));
     SET_PORT(&saddr, AudioPortNumber);
 
+    // Every wait below checks the interrupt flag under the mutex. stopAudioCaptureStream()
+    // sets the flag and signals under the same mutex, so a stop can never be missed.
     PltLockMutex(&isMicToggled_MTX);
-    if(rtpSocket == 0){
+    if (rtpSocket == 0 && !PltIsThreadInterrupted(&captureThread)) {
         PltWaitForConditionVariable(&isMicToggled_MTX_COND, &isMicToggled_MTX);
     }
     PltUnlockMutex(&isMicToggled_MTX);
@@ -65,10 +67,14 @@ void audioCaptureThreadProc(void *context)
     while (!PltIsThreadInterrupted(&captureThread))
     {
         PltLockMutex(&isMicToggled_MTX);
-        if(!isMicToggled){
+        while (!isMicToggled && !PltIsThreadInterrupted(&captureThread)) {
             PltWaitForConditionVariable(&isMicToggled_MTX_COND, &isMicToggled_MTX);
         }
         PltUnlockMutex(&isMicToggled_MTX);
+
+        if (PltIsThreadInterrupted(&captureThread)) {
+            break;
+        }
 
         if (len < FRAME_SAMPLE_COUNT * 2)
         {
@@ -146,15 +152,17 @@ void stopAudioCaptureStream(void)
 {
     AudioCaptureCallbacks.stop();
 
-    PltLockMutex(&isMicToggled_MTX);
-    if(!isMicToggled){
-        PltSignalConditionVariable(&isMicToggled_MTX_COND);
-    }
-    PltUnlockMutex(&isMicToggled_MTX);
-
     if (captureThreadStarted)
     {
+        // Interrupt before waking the thread, both under the mutex: the thread re-checks
+        // the flag there before every wait. Signalling first let a thread that woke, went
+        // round its loop and waited again before the flag was set sleep forever, and the
+        // join below - and with it the whole session teardown - never returned.
+        PltLockMutex(&isMicToggled_MTX);
         PltInterruptThread(&captureThread);
+        PltSignalConditionVariable(&isMicToggled_MTX_COND);
+        PltUnlockMutex(&isMicToggled_MTX);
+
         PltJoinThread(&captureThread);
         captureThreadStarted = false;
     }
